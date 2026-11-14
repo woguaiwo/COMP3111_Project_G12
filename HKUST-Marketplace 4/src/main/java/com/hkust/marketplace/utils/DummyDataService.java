@@ -9,11 +9,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
- * In-memory data store for the frontend demo.
- * All data is lost when the application closes.
- * TODO: Replace this service with real repositories / API clients.
+ * Compatibility facade used by the existing controllers.
+ *
+ * <p>Without {@code DATABASE_URL} it keeps the original in-memory demo. When
+ * that value is present it delegates persistence to Neon through JDBC and
+ * bootstraps the empty development database with the demo records.</p>
  */
-public class DummyDataService {
+public class DummyDataService implements MarketplaceDataService {
 
     private static final DummyDataService INSTANCE = new DummyDataService();
 
@@ -22,6 +24,7 @@ public class DummyDataService {
     private final List<Deal> deals = new ArrayList<>();
     private final List<Notification> notifications = new ArrayList<>();
     private final List<Review> reviews = new ArrayList<>();
+    private final MarketplaceDataService backend;
 
     private final AtomicInteger listingIdCounter = new AtomicInteger(100);
     private final AtomicInteger dealIdCounter = new AtomicInteger(500);
@@ -61,11 +64,29 @@ public class DummyDataService {
     );
 
     private DummyDataService() {
+        MarketplaceDataService connectedBackend = null;
+        if (NeonConfig.isConfigured()) {
+            try {
+                connectedBackend = new JdbcMarketplaceDataService(NeonConfig.databaseUrl());
+                System.out.println("[Marketplace] Neon persistence enabled.");
+            } catch (RuntimeException e) {
+                System.err.println("[Marketplace] Neon configuration was found but could not be used; "
+                        + "falling back to demo data: " + e.getMessage());
+            }
+        }
+        backend = connectedBackend;
         seedData();
+        if (backend instanceof JdbcMarketplaceDataService jdbc) {
+            jdbc.bootstrapIfEmpty(users.values(), listings.values(), deals, notifications, reviews);
+        }
     }
 
     public static DummyDataService getInstance() {
         return INSTANCE;
+    }
+
+    public boolean isNeonEnabled() {
+        return backend != null;
     }
 
     private void seedData() {
@@ -177,82 +198,137 @@ public class DummyDataService {
     }
 
     // ========== User methods ==========
+    @Override
     public boolean usernameExists(String username) {
+        if (backend != null) return backend.usernameExists(username);
         return users.containsKey(username.toLowerCase());
     }
 
+    @Override
     public User findUser(String username) {
+        if (backend != null) return backend.findUser(username);
         return users.get(username.toLowerCase());
     }
 
+    @Override
+    public boolean authenticate(String username, String password) {
+        if (backend != null) return backend.authenticate(username, password);
+        User user = findUser(username);
+        return user != null && user.getPasswordHash() != null
+                && user.getPasswordHash().equals(password);
+    }
+
+    @Override
     public void registerUser(User user) {
+        if (backend != null) {
+            backend.registerUser(user);
+            return;
+        }
         users.put(user.getUsername().toLowerCase(), user);
     }
 
+    @Override
     public Collection<User> getAllUsers() {
+        if (backend != null) return backend.getAllUsers();
         return users.values();
     }
 
+    @Override
     public List<User> getUsersByRole(UserRole role) {
+        if (backend != null) return backend.getUsersByRole(role);
         return users.values().stream()
                 .filter(u -> u.getRole() == role)
                 .collect(Collectors.toList());
     }
 
     // ========== Listing methods ==========
+    @Override
     public Collection<Listing> getAllListings() {
+        if (backend != null) return backend.getAllListings();
         return listings.values();
     }
 
+    @Override
     public List<Listing> getLiveListings() {
+        if (backend != null) return backend.getLiveListings();
         return listings.values().stream()
                 .filter(l -> l.getStatus() == ListingStatus.LIVE)
                 .collect(Collectors.toList());
     }
 
+    @Override
     public List<Listing> getPendingListings() {
+        if (backend != null) return backend.getPendingListings();
         return listings.values().stream()
                 .filter(l -> l.getStatus() == ListingStatus.PENDING_REVIEW)
                 .collect(Collectors.toList());
     }
 
+    @Override
     public List<Listing> getListingsBySeller(String username) {
+        if (backend != null) return backend.getListingsBySeller(username);
         return listings.values().stream()
                 .filter(l -> l.getSellerUsername().equalsIgnoreCase(username))
                 .collect(Collectors.toList());
     }
 
+    @Override
     public Listing findListing(String id) {
+        if (backend != null) return backend.findListing(id);
         return listings.get(id);
     }
 
+    @Override
     public void addListing(Listing listing) {
+        if (backend != null) {
+            backend.addListing(listing);
+            return;
+        }
         if (listing.getId() == null) {
             listing.setId("L" + listingIdCounter.getAndIncrement());
         }
         listings.put(listing.getId(), listing);
     }
 
+    @Override
     public void updateListing(Listing listing) {
+        if (backend != null) {
+            backend.updateListing(listing);
+            return;
+        }
         listings.put(listing.getId(), listing);
     }
 
+    @Override
     public void removeListing(String id) {
+        if (backend != null) {
+            backend.removeListing(id);
+            return;
+        }
         listings.remove(id);
     }
 
     // ========== Deal methods ==========
+    @Override
     public List<Deal> getDealsForBuyer(String username) {
+        if (backend != null) return backend.getDealsForBuyer(username);
         return deals.stream()
                 .filter(d -> d.getBuyerUsername().equalsIgnoreCase(username))
                 .collect(Collectors.toList());
     }
 
+    @Override
     public List<Deal> getAllDeals() {
+        if (backend != null) return backend.getAllDeals();
         return new ArrayList<>(deals);
     }
 
+    @Override
     public void addDeal(Deal deal) {
+        if (backend != null) {
+            backend.addDeal(deal);
+            return;
+        }
         if (deal.getId() == null) {
             deal.setId("D" + dealIdCounter.getAndIncrement());
         }
@@ -260,14 +336,21 @@ public class DummyDataService {
     }
 
     // ========== Notification methods ==========
+    @Override
     public List<Notification> getNotificationsFor(String username) {
+        if (backend != null) return backend.getNotificationsFor(username);
         return notifications.stream()
                 .filter(n -> n.getUsername().equalsIgnoreCase(username))
                 .sorted(Comparator.comparing(Notification::getTimestamp).reversed())
                 .collect(Collectors.toList());
     }
 
+    @Override
     public void addNotification(Notification n) {
+        if (backend != null) {
+            backend.addNotification(n);
+            return;
+        }
         if (n.getId() == null) {
             n.setId("N" + notifIdCounter.getAndIncrement());
         }
@@ -275,17 +358,26 @@ public class DummyDataService {
     }
 
     // ========== Review methods ==========
+    @Override
     public List<Review> getReviewsForSeller(String username) {
+        if (backend != null) return backend.getReviewsForSeller(username);
         return reviews.stream()
                 .filter(r -> r.getSellerUsername().equalsIgnoreCase(username) && !r.isHidden())
                 .collect(Collectors.toList());
     }
 
+    @Override
     public List<Review> getAllReviews() {
+        if (backend != null) return backend.getAllReviews();
         return new ArrayList<>(reviews);
     }
 
+    @Override
     public void addReview(Review r) {
+        if (backend != null) {
+            backend.addReview(r);
+            return;
+        }
         if (r.getId() == null) {
             r.setId("R" + reviewIdCounter.getAndIncrement());
         }

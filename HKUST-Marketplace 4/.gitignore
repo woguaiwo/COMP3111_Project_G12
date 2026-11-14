@@ -1,0 +1,11 @@
+target/
+*.class
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+database/.env
+database/.env.*
+!database/.env.example
+.neon

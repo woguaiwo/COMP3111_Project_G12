@@ -38,8 +38,7 @@ public class BuyerLoginController {
             showError("This account is not a Buyer account. Please use the correct portal.");
             return;
         }
-        // Demo: plaintext comparison. TODO: use hashed password verification
-        if (!user.getPasswordHash().equals(password)) {
+        if (!DummyDataService.getInstance().authenticate(username, password)) {
             showError("Incorrect password. Please try again.");
             return;
         }

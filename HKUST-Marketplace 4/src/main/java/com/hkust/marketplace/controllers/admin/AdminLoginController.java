@@ -32,7 +32,7 @@ public class AdminLoginController {
             showError("Invalid admin credentials.");
             return;
         }
-        if (!user.getPasswordHash().equals(password)) {
+        if (!DummyDataService.getInstance().authenticate(username, password)) {
             showError("Incorrect password.");
             return;
         }
