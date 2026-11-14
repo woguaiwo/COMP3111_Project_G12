@@ -2,6 +2,7 @@ package com.hkust.marketplace.controllers.seller;
 
 import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
+import com.hkust.marketplace.utils.AuthSession;
 import com.hkust.marketplace.utils.DummyDataService;
 import com.hkust.marketplace.utils.SceneManager;
 import com.hkust.marketplace.utils.SessionManager;
@@ -27,24 +28,21 @@ public class SellerLoginController {
             showError("Please enter both username and password.");
             return;
         }
-        User user = DummyDataService.getInstance().findUser(username);
-        if (user == null) {
-            showError("User not found.");
+        AuthSession auth = DummyDataService.getInstance().login(username, password);
+        if (auth == null || auth.user() == null) {
+            showError("Invalid username or password.");
             return;
         }
+        User user = auth.user();
         if (user.getRole() != UserRole.SELLER) {
             showError("This account is not a Seller account. Use the correct portal.");
-            return;
-        }
-        if (!DummyDataService.getInstance().authenticate(username, password)) {
-            showError("Incorrect password.");
             return;
         }
         if (!user.isActive()) {
             showError("Account deactivated.");
             return;
         }
-        SessionManager.login(user);
+        SessionManager.login(user, auth.accessToken(), auth.expiresAt());
         SceneManager.showSellerDashboard();
     }
 

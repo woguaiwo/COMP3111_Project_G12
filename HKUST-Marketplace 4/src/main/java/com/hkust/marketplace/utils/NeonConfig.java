@@ -9,14 +9,23 @@ import java.util.List;
 /**
  * Reads the optional local Neon connection configuration.
  *
- * <p>The released application must not contain a database password. During
- * team development the value can be supplied as {@code DATABASE_URL} or in an
- * ignored {@code database/.env} file. A missing value intentionally keeps the
- * existing offline demo mode working.</p>
+ * <p>The released application contains only the public Function URL. During
+ * team development a database URL may be supplied through an ignored local
+ * file to select the JDBC fallback.</p>
  */
 public final class NeonConfig {
 
     private static final String DATABASE_URL = "DATABASE_URL";
+    private static final String MARKETPLACE_API_URL = "MARKETPLACE_API_URL";
+    private static final String MARKETPLACE_MODE = "MARKETPLACE_MODE";
+
+    /**
+     * Filled with the deployed Neon Function URL after deployment. Keeping the
+     * URL in the client is safe; the database connection string and JWT secret
+     * stay exclusively in the function environment.
+     */
+    private static final String DEFAULT_API_URL =
+            "https://br-dawn-dust-b3f6mcny-marketplaceapi.compute.c-4.ap-southeast-1.aws.neon.tech";
 
     private NeonConfig() {
     }
@@ -33,10 +42,52 @@ public final class NeonConfig {
     }
 
     public static boolean isConfigured() {
-        return databaseUrl() != null;
+        return !isDemoMode() && databaseUrl() != null;
+    }
+
+    public static String apiUrl() {
+        if (isDemoMode() || isJdbcMode()) {
+            return null;
+        }
+        return firstNonBlank(
+                System.getenv(MARKETPLACE_API_URL),
+                System.getProperty(MARKETPLACE_API_URL),
+                readFromDotEnv(Path.of("backend", ".env.local"), MARKETPLACE_API_URL),
+                readFromDotEnv(Path.of("backend", ".env"), MARKETPLACE_API_URL),
+                readFromDotEnv(Path.of(".env.local"), MARKETPLACE_API_URL),
+                DEFAULT_API_URL
+        );
+    }
+
+    /**
+     * Selects the original in-memory demo instead of contacting Neon.
+     * This is useful for Scene Builder/UI work without network access.
+     */
+    public static boolean isDemoMode() {
+        String mode = marketplaceMode();
+        return "demo".equalsIgnoreCase(mode) || "offline".equalsIgnoreCase(mode);
+    }
+
+    private static boolean isJdbcMode() {
+        return "jdbc".equalsIgnoreCase(marketplaceMode());
+    }
+
+    private static String marketplaceMode() {
+        return firstNonBlank(
+                System.getenv(MARKETPLACE_MODE),
+                System.getProperty(MARKETPLACE_MODE),
+                readFromDotEnv(Path.of("backend", ".env.local"), MARKETPLACE_MODE),
+                readFromDotEnv(Path.of("backend", ".env"), MARKETPLACE_MODE),
+                readFromDotEnv(Path.of(".env.local"), MARKETPLACE_MODE),
+                readFromDotEnv(Path.of(".env"), MARKETPLACE_MODE)
+        );
     }
 
     private static String readFromDotEnv(Path path) {
+        return readFromDotEnv(path, DATABASE_URL);
+    }
+
+    private static String readFromDotEnv(Path path, String requestedKey) {
         if (!Files.isRegularFile(path)) {
             return null;
         }
@@ -52,7 +103,7 @@ public final class NeonConfig {
                     continue;
                 }
                 String key = trimmed.substring(0, separator).trim();
-                if (!DATABASE_URL.equals(key)) {
+                if (!requestedKey.equals(key)) {
                     continue;
                 }
                 return unquote(trimmed.substring(separator + 1).trim());

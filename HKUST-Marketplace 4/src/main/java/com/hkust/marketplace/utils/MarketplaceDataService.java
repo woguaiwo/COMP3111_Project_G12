@@ -13,10 +13,9 @@ import java.util.List;
 /**
  * Persistence boundary used by the JavaFX controllers.
  *
- * <p>The demo can implement this contract in memory, while a local development
- * run can select the PostgreSQL implementation through {@code DATABASE_URL}.
- * Keeping this contract small makes it possible to move the database calls to
- * an HTTP API later without changing the screens again.</p>
+ * <p>The demo can implement this contract in memory, while the public client
+ * uses the authenticated HTTP implementation. A local development run can
+ * still select the PostgreSQL adapter through {@code DATABASE_URL}.</p>
  */
 public interface MarketplaceDataService {
 
@@ -24,7 +23,23 @@ public interface MarketplaceDataService {
 
     User findUser(String username);
 
-    boolean authenticate(String username, String password);
+    /**
+     * Authenticates a user and returns the application session created by the
+     * backend.  The token is intentionally kept out of the User model.
+     */
+    AuthSession login(String username, String password);
+
+    /**
+     * Invalidates the current backend session when the implementation has one.
+     */
+    void logout();
+
+    /**
+     * Compatibility helper for older screens and the JDBC adapter.
+     */
+    default boolean authenticate(String username, String password) {
+        return login(username, password) != null;
+    }
 
     void registerUser(User user);
 

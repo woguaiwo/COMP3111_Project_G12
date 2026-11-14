@@ -2,6 +2,7 @@ package com.hkust.marketplace.controllers.admin;
 
 import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
+import com.hkust.marketplace.utils.AuthSession;
 import com.hkust.marketplace.utils.DummyDataService;
 import com.hkust.marketplace.utils.SceneManager;
 import com.hkust.marketplace.utils.SessionManager;
@@ -27,16 +28,13 @@ public class AdminLoginController {
             showError("Please enter credentials.");
             return;
         }
-        User user = DummyDataService.getInstance().findUser(username);
-        if (user == null || user.getRole() != UserRole.ADMIN) {
+        AuthSession auth = DummyDataService.getInstance().login(username, password);
+        if (auth == null || auth.user() == null || auth.user().getRole() != UserRole.ADMIN) {
             showError("Invalid admin credentials.");
             return;
         }
-        if (!DummyDataService.getInstance().authenticate(username, password)) {
-            showError("Incorrect password.");
-            return;
-        }
-        SessionManager.login(user);
+        User user = auth.user();
+        SessionManager.login(user, auth.accessToken(), auth.expiresAt());
         SceneManager.showAdminDashboard();
     }
 

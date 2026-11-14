@@ -216,9 +216,12 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
     }
 
     @Override
-    public boolean authenticate(String username, String password) {
+    public AuthSession login(String username, String password) {
         String sql = """
-                SELECT c.password_hash
+                SELECT u.id, u.username, u.full_name, u.role::text AS role_name,
+                       u.residence_hall, u.bio, u.preferred_meetup, u.is_active,
+                       u.average_rating, u.rating_count, u.created_at,
+                       c.password_hash
                   FROM app_credentials c
                   JOIN app_users u ON u.id = c.user_id
                  WHERE lower(u.username) = lower(?)
@@ -228,11 +231,19 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, username);
             try (ResultSet result = statement.executeQuery()) {
-                return result.next() && PasswordHasher.matches(password, result.getString(1));
+                if (!result.next() || !PasswordHasher.matches(password, result.getString("password_hash"))) {
+                    return null;
+                }
+                return new AuthSession(readUser(result), null, null);
             }
         } catch (SQLException e) {
-            throw failure("authenticate user", e);
+            throw failure("login user", e);
         }
+    }
+
+    @Override
+    public void logout() {
+        // JDBC development sessions are held by the JavaFX process only.
     }
 
     @Override

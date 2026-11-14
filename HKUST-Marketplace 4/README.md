@@ -1,6 +1,6 @@
 # HKUST Marketplace — JavaFX UI skeleton
 
-This folder contains the JavaFX application for the COMP3111 HKUST Marketplace project. It is a JavaFX + Maven application with FXML views, a shared stylesheet, HKUST branding, and a switchable in-memory/Neon data layer. No database is required to preview the screens.
+This folder contains the JavaFX application for the COMP3111 HKUST Marketplace project. It is a JavaFX + Maven application with FXML views, a shared stylesheet, HKUST branding, and a switchable API/JDBC/in-memory data layer. The released client uses the public API; use `MARKETPLACE_MODE=demo` for an offline UI preview.
 
 ## Quick UI preview (Windows)
 
@@ -28,7 +28,7 @@ Requirements:
 | Seller | `charlie` | `password1` |
 | Seller | `diana` | `password1` |
 
-Without a local Neon configuration, all data is in memory and resets when the application closes. With `database/.env` configured, the app uses the shared `dev` database and writes password hashes to the transitional `app_credentials` table. The direct JDBC mode is for team development; a public deployment should move database access behind an authenticated API.
+The released client uses the public `marketplaceapi` Neon Function. It sends only HTTPS requests and a short-lived JWT; it never contains a Neon connection string or password hash. The seeded accounts above are available in the shared `dev` branch, and new buyers/sellers register with a username, full name, and password without creating a Neon account. A local `DATABASE_URL` is still supported as a development-only JDBC fallback when `MARKETPLACE_MODE=jdbc` is selected.
 
 ## Preview individual FXML files in Scene Builder
 
@@ -54,9 +54,9 @@ src/main/resources/fxml/admin/AdminDashboardView.fxml
 
 For the complete styling and navigation, use `mvnw.cmd javafx:run`; the application loads [`styles.css`](src/main/resources/css/styles.css) and the matching controller at runtime. Scene Builder only previews the FXML structure and may show controller or stylesheet warnings that do not prevent the application from running.
 
-## Neon database mode
+## Neon database and external-user mode
 
-The compatibility facade still exposes `DummyDataService` to the existing controllers, but it delegates to Neon when `DATABASE_URL` is available. The first run against an empty `dev` branch bootstraps the demo records. Follow [`database/README.md`](database/README.md) for CLI linking and local env setup; the schema is in [`database/schema.sql`](database/schema.sql). Never put a real Neon connection string in Git or in a released JavaFX client.
+The compatibility facade still exposes `DummyDataService` to the existing controllers, but it now prefers [`HttpMarketplaceDataService`](src/main/java/com/hkust/marketplace/utils/HttpMarketplaceDataService.java), backed by the deployed Neon Function. The function owns `DATABASE_URL`, PBKDF2 verification, HMAC JWT signing, and revocable `app_sessions` rows. `SessionManager` keeps the token only in memory and logout revokes the server-side session. Set `MARKETPLACE_MODE=demo` for the original in-memory UI data or `MARKETPLACE_MODE=jdbc` for a local JDBC development run. Follow [`backend/README.md`](backend/README.md) and [`database/README.md`](database/README.md) for deployment and schema details. Never put a real Neon connection string or `JWT_SECRET` in Git or in a released JavaFX client.
 
 ## Project layout
 
@@ -93,4 +93,4 @@ In IntelliJ IDEA, open this folder as a Maven project and run `MarketplaceApp.ja
 
 ## Current scope
 
-The screens demonstrate the intended UI and interaction flow. Neon persistence now covers the current users, listings, deals, notifications, and supported reviews. The remaining production step is to move direct JDBC calls behind an authenticated API and finish the Neon Auth/Data API RLS integration.
+The screens demonstrate the intended UI and interaction flow. External users now use the authenticated API for users, listings, deals, notifications, and reviews; direct JDBC and in-memory data remain explicit local development modes. Neon Auth is not used for this username-only flow, so application users do not need Neon invitations or Neon sign-up accounts.

@@ -10,9 +10,8 @@ import java.util.Base64;
 /**
  * Small PBKDF2 helper for the local JDBC prototype.
  *
- * <p>Neon Auth remains the target for a public deployment. This helper keeps
- * the current JavaFX registration flow from putting plaintext passwords in
- * the shared database while the API/Auth layer is being integrated.</p>
+ * <p>The same format is used by the deployed API so registration and login
+ * can verify passwords without storing plaintext credentials.</p>
  */
 public final class PasswordHasher {
 

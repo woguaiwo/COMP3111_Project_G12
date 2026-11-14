@@ -1,10 +1,7 @@
 -- HKUST Marketplace - Neon/PostgreSQL starter schema
 --
--- User profiles do not contain a password column. The app_credentials table
--- is a transitional PBKDF2 credential store for the local JavaFX/JDBC adapter;
--- use Neon Auth or a backend authentication service for a public deployment.
--- The current JavaFX skeleton still uses DummyDataService; this file is the
--- persistence contract for the later repository/API integration.
+-- User profiles do not contain a password column. Password hashes and
+-- revocable JWT sessions live in separate tables owned by the backend API.
 
 begin;
 
@@ -30,13 +27,21 @@ create table app_users (
     updated_at timestamptz not null default now()
 );
 
--- Transitional credential storage for the JavaFX/JDBC development adapter.
--- Public deployments should use the enabled Neon Auth service instead.
+-- Credential storage for the username/password marketplace API. The table is
+-- never queried directly by the JavaFX client.
 create table app_credentials (
     user_id bigint primary key references app_users(id) on delete cascade,
     password_hash text not null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
+);
+
+create table app_sessions (
+    jti uuid primary key,
+    user_id bigint not null references app_users(id) on delete cascade,
+    expires_at timestamptz not null,
+    revoked_at timestamptz,
+    created_at timestamptz not null default now()
 );
 
 create table listings (
@@ -125,6 +130,8 @@ create index deals_buyer_idx on deals (buyer_id, created_at desc);
 create index deals_seller_idx on deals (seller_id, created_at desc);
 create index reviews_seller_idx on reviews (seller_id, created_at desc);
 create index notifications_recipient_idx on notifications (recipient_id, is_read, created_at desc);
+create index app_sessions_user_expiry_idx on app_sessions (user_id, expires_at);
+create index app_sessions_active_expiry_idx on app_sessions (expires_at) where revoked_at is null;
 
 create or replace function set_updated_at()
 returns trigger
@@ -153,6 +160,7 @@ for each row execute function set_updated_at();
 -- is enabled later, add explicit JWT/RLS policies before exposing any table.
 alter table app_users enable row level security;
 alter table app_credentials enable row level security;
+alter table app_sessions enable row level security;
 alter table listings enable row level security;
 alter table listing_photos enable row level security;
 alter table deals enable row level security;

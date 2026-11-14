@@ -8,4 +8,8 @@ target/
 database/.env
 database/.env.*
 !database/.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+backend/**/node_modules/
 .neon

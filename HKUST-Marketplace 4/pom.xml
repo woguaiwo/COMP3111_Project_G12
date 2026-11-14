@@ -17,6 +17,7 @@
         <javafx.version>21.0.2</javafx.version>
         <javafx.maven.plugin.version>0.0.8</javafx.maven.plugin.version>
         <postgresql.version>42.7.14</postgresql.version>
+        <jackson.version>2.15.4</jackson.version>
     </properties>
 
     <dependencies>
@@ -44,6 +45,11 @@
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <version>${postgresql.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
         </dependency>
     </dependencies>
 

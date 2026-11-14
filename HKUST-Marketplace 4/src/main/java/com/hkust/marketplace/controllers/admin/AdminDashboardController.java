@@ -370,6 +370,7 @@ public class AdminDashboardController {
 
     @FXML
     private void logout() {
+        DummyDataService.getInstance().logout();
         SessionManager.logout();
         SceneManager.showWelcome();
     }

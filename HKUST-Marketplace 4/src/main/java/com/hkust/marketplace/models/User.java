@@ -3,13 +3,13 @@ package com.hkust.marketplace.models;
 import java.time.LocalDateTime;
 
 /**
- * Simple in-memory user model (no persistence).
- * TODO: Replace with real entity + repository when backend is added.
+ * Client-side user profile model. Password text is used only transiently by
+ * the registration form; the API hashes it before storing credentials.
  */
 public class User {
     private String username;
     private String fullName;
-    private String passwordHash; // In real app: never store plaintext
+    private String passwordHash; // Name retained for compatibility with the JDBC adapter
     private UserRole role;
     private String residenceHall;   // Buyer optional
     private String bio;             // Seller optional
@@ -27,7 +27,7 @@ public class User {
         this();
         this.username = username;
         this.fullName = fullName;
-        this.passwordHash = password; // Demo only – in production hash it!
+        this.passwordHash = password; // Cleared after a successful API registration
         this.role = role;
     }
 

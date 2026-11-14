@@ -11,9 +11,10 @@ import java.util.stream.Collectors;
 /**
  * Compatibility facade used by the existing controllers.
  *
- * <p>Without {@code DATABASE_URL} it keeps the original in-memory demo. When
- * that value is present it delegates persistence to Neon through JDBC and
- * bootstraps the empty development database with the demo records.</p>
+ * <p>The public application uses the deployed HTTP API. A local
+ * {@code DATABASE_URL} remains available for development when
+ * {@code MARKETPLACE_MODE=jdbc}; {@code MARKETPLACE_MODE=demo} selects the
+ * original in-memory demo.</p>
  */
 public class DummyDataService implements MarketplaceDataService {
 
@@ -65,7 +66,16 @@ public class DummyDataService implements MarketplaceDataService {
 
     private DummyDataService() {
         MarketplaceDataService connectedBackend = null;
-        if (NeonConfig.isConfigured()) {
+        if (NeonConfig.apiUrl() != null) {
+            try {
+                connectedBackend = new HttpMarketplaceDataService(NeonConfig.apiUrl());
+                System.out.println("[Marketplace] Authenticated marketplace API enabled.");
+            } catch (RuntimeException e) {
+                System.err.println("[Marketplace] Marketplace API configuration was found but could not be used; "
+                        + "falling back to the next available mode: " + e.getMessage());
+            }
+        }
+        if (connectedBackend == null && NeonConfig.isConfigured()) {
             try {
                 connectedBackend = new JdbcMarketplaceDataService(NeonConfig.databaseUrl());
                 System.out.println("[Marketplace] Neon persistence enabled.");
@@ -87,6 +97,10 @@ public class DummyDataService implements MarketplaceDataService {
 
     public boolean isNeonEnabled() {
         return backend != null;
+    }
+
+    public boolean isApiEnabled() {
+        return backend instanceof HttpMarketplaceDataService;
     }
 
     private void seedData() {
@@ -211,11 +225,20 @@ public class DummyDataService implements MarketplaceDataService {
     }
 
     @Override
-    public boolean authenticate(String username, String password) {
-        if (backend != null) return backend.authenticate(username, password);
+    public AuthSession login(String username, String password) {
+        if (backend != null) return backend.login(username, password);
         User user = findUser(username);
         return user != null && user.getPasswordHash() != null
-                && user.getPasswordHash().equals(password);
+                && user.getPasswordHash().equals(password)
+                ? new AuthSession(user, null, null)
+                : null;
+    }
+
+    @Override
+    public void logout() {
+        if (backend != null) {
+            backend.logout();
+        }
     }
 
     @Override
