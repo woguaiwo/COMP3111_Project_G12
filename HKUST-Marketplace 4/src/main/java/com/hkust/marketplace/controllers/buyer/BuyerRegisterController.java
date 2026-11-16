@@ -3,6 +3,7 @@ package com.hkust.marketplace.controllers.buyer;
 import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
 import com.hkust.marketplace.utils.DummyDataService;
+import com.hkust.marketplace.utils.JdbcMarketplaceDataService;
 import com.hkust.marketplace.utils.SceneManager;
 import javafx.collections.FXCollections;
 import javafx.fxml.FXML;
@@ -42,8 +43,13 @@ public class BuyerRegisterController {
             showError("Username is required.");
             return;
         }
-        if (DummyDataService.getInstance().usernameExists(username)) {
-            showError("Username already taken. Please choose another.");
+        try {
+            if (DummyDataService.getInstance().usernameExists(username)) {
+                showError("Username already taken. Please choose another.");
+                return;
+            }
+        } catch (JdbcMarketplaceDataService.DataAccessException e) {
+            showError("Unable to reach the marketplace database. Please try again.");
             return;
         }
         if (fullName.isEmpty()) {
@@ -65,7 +71,12 @@ public class BuyerRegisterController {
         if (residence != null) {
             user.setResidenceHall(residence);
         }
-        DummyDataService.getInstance().registerUser(user);
+        try {
+            DummyDataService.getInstance().registerUser(user);
+        } catch (JdbcMarketplaceDataService.DataAccessException e) {
+            showError("Unable to save the account. Please try again.");
+            return;
+        }
 
         showSuccess("Registration successful! You can now login.");
         // Clear form

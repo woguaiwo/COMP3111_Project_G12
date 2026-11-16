@@ -3,6 +3,7 @@ package com.hkust.marketplace.controllers.seller;
 import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
 import com.hkust.marketplace.utils.DummyDataService;
+import com.hkust.marketplace.utils.JdbcMarketplaceDataService;
 import com.hkust.marketplace.utils.SceneManager;
 import javafx.collections.FXCollections;
 import javafx.fxml.FXML;
@@ -33,8 +34,13 @@ public class SellerRegisterController {
         String confirm = confirmPasswordField.getText();
 
         if (username.isEmpty()) { showError("Username is required."); return; }
-        if (DummyDataService.getInstance().usernameExists(username)) {
-            showError("Username already taken."); return;
+        try {
+            if (DummyDataService.getInstance().usernameExists(username)) {
+                showError("Username already taken."); return;
+            }
+        } catch (JdbcMarketplaceDataService.DataAccessException e) {
+            showError("Unable to reach the marketplace database. Please try again.");
+            return;
         }
         if (fullName.isEmpty()) { showError("Full Name cannot be empty."); return; }
         String pwdCheck = DummyDataService.checkPasswordStrength(password);
@@ -44,7 +50,12 @@ public class SellerRegisterController {
         User user = new User(username.toLowerCase(), fullName, password, UserRole.SELLER);
         if (meetupCombo.getValue() != null) user.setPreferredMeetup(meetupCombo.getValue());
         if (bioArea.getText() != null && !bioArea.getText().isBlank()) user.setBio(bioArea.getText().trim());
-        DummyDataService.getInstance().registerUser(user);
+        try {
+            DummyDataService.getInstance().registerUser(user);
+        } catch (JdbcMarketplaceDataService.DataAccessException e) {
+            showError("Unable to save the account. Please try again.");
+            return;
+        }
 
         showSuccess("Seller account created! You can now login.");
         usernameField.clear(); fullNameField.clear(); passwordField.clear();

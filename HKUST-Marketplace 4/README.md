@@ -28,7 +28,7 @@ Requirements:
 | Seller | `charlie` | `password1` |
 | Seller | `diana` | `password1` |
 
-The released client uses the public `marketplaceapi` Neon Function. It sends only HTTPS requests and a short-lived JWT; it never contains a Neon connection string or password hash. The seeded accounts above are available in the shared `dev` branch, and new buyers/sellers register with a username, full name, and password without creating a Neon account. A local `DATABASE_URL` is still supported as a development-only JDBC fallback when `MARKETPLACE_MODE=jdbc` is selected.
+The released client uses the public `marketplaceapi` Neon Function. It sends only HTTPS requests and a short-lived JWT; it never contains a Neon connection string or password hash. The seeded accounts above are available in the shared `dev` branch, and new buyers/sellers register with a username, full name, and password without creating a Neon account. A local `DATABASE_URL` is supported as a development-only JDBC fallback when `MARKETPLACE_MODE=jdbc` is selected; if the API is unreachable and that local URL exists, the client also selects JDBC automatically.
 
 ## Preview individual FXML files in Scene Builder
 

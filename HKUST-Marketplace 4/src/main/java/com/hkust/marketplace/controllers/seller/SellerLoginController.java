@@ -4,6 +4,7 @@ import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
 import com.hkust.marketplace.utils.AuthSession;
 import com.hkust.marketplace.utils.DummyDataService;
+import com.hkust.marketplace.utils.JdbcMarketplaceDataService;
 import com.hkust.marketplace.utils.SceneManager;
 import com.hkust.marketplace.utils.SessionManager;
 import javafx.fxml.FXML;
@@ -28,7 +29,13 @@ public class SellerLoginController {
             showError("Please enter both username and password.");
             return;
         }
-        AuthSession auth = DummyDataService.getInstance().login(username, password);
+        AuthSession auth;
+        try {
+            auth = DummyDataService.getInstance().login(username, password);
+        } catch (JdbcMarketplaceDataService.DataAccessException e) {
+            showError("Unable to reach the marketplace database. Please try again.");
+            return;
+        }
         if (auth == null || auth.user() == null) {
             showError("Invalid username or password.");
             return;

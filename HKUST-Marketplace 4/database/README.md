@@ -2,7 +2,7 @@
 
 The JavaFX client uses `DummyDataService` as a compatibility facade. In the shared deployment it calls the authenticated Neon Function API; this folder defines the PostgreSQL schema used by that API. Set `MARKETPLACE_MODE=jdbc` for a local JDBC run or `MARKETPLACE_MODE=demo` for an offline UI preview.
 
-The public path is `HttpMarketplaceDataService -> marketplaceapi Neon Function -> Neon PostgreSQL`. A local `DATABASE_URL` selects the JDBC adapter when `MARKETPLACE_MODE=jdbc`; the original in-memory demo is selected with `MARKETPLACE_MODE=demo`.
+The public path is `HttpMarketplaceDataService -> marketplaceapi Neon Function -> Neon PostgreSQL`. A local `DATABASE_URL` selects the JDBC adapter when `MARKETPLACE_MODE=jdbc`; if the public Function is unreachable and that local URL exists, the client falls back to JDBC automatically. The original in-memory demo is selected with `MARKETPLACE_MODE=demo`.
 
 ## Recommended shape
 

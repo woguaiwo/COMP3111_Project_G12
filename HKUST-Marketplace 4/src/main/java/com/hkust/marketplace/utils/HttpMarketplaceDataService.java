@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -39,7 +40,9 @@ import java.util.Map;
 public class HttpMarketplaceDataService implements MarketplaceDataService {
 
     private final String baseUrl;
-    private final HttpClient httpClient = HttpClient.newBuilder().build();
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public HttpMarketplaceDataService(String baseUrl) {
@@ -47,6 +50,30 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
             throw new IllegalArgumentException("Marketplace API URL is required");
         }
         this.baseUrl = baseUrl.replaceAll("/+$", "");
+    }
+
+    /**
+     * Checks the public Function without requiring an application session.
+     * This lets a local developer with a DATABASE_URL use JDBC when a network
+     * blocks the Function endpoint, while public clients continue using HTTP.
+     */
+    public boolean isAvailable() {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/health"))
+                    .timeout(Duration.ofSeconds(3))
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = httpClient.send(
+                    request, HttpResponse.BodyHandlers.discarding());
+            return response.statusCode() >= 200 && response.statusCode() < 300;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     @Override
@@ -248,7 +275,8 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
                     ? HttpRequest.BodyPublishers.noBody()
                     : HttpRequest.BodyPublishers.ofString(requestBody);
             HttpResponse<String> response = httpClient.send(
-                    builder.method(method, publisher).build(),
+                    builder.timeout(Duration.ofSeconds(15))
+                            .method(method, publisher).build(),
                     HttpResponse.BodyHandlers.ofString());
             JsonNode result;
             try {
