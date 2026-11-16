@@ -69,21 +69,19 @@ public class DummyDataService implements MarketplaceDataService {
         String apiUrl = NeonConfig.apiUrl();
         if (apiUrl != null) {
             try {
-                HttpMarketplaceDataService httpBackend = new HttpMarketplaceDataService(apiUrl);
-                boolean apiAvailable = httpBackend.isAvailable();
-                if (apiAvailable || NeonConfig.databaseUrl() == null) {
+                HttpMarketplaceDataService httpBackend = new HttpMarketplaceDataService(apiUrl, NeonConfig.authUrl());
+                if (httpBackend.isAvailable()) {
                     connectedBackend = httpBackend;
-                    System.out.println("[Marketplace] Authenticated marketplace API enabled.");
+                    System.out.println("[Marketplace] Neon Data API + Auth enabled.");
                 } else {
-                    System.err.println("[Marketplace] Marketplace API is not reachable; "
-                            + "using the configured local JDBC database.");
+                    System.err.println("[Marketplace] Neon Data API is not reachable.");
                 }
             } catch (RuntimeException e) {
                 System.err.println("[Marketplace] Marketplace API configuration was found but could not be used; "
                         + "falling back to the next available mode: " + e.getMessage());
             }
         }
-        if (connectedBackend == null && NeonConfig.isConfigured()) {
+        if (connectedBackend == null && NeonConfig.isJdbcMode() && NeonConfig.isConfigured()) {
             try {
                 connectedBackend = new JdbcMarketplaceDataService(NeonConfig.databaseUrl());
                 System.out.println("[Marketplace] Neon persistence enabled.");

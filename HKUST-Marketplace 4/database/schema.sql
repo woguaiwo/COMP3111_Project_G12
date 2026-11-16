@@ -12,6 +12,8 @@ create type deal_status as enum ('PENDING', 'ACCEPTED', 'COMPLETED', 'RETURNED',
 
 create table app_users (
     id bigint generated always as identity primary key,
+    -- Neon Auth user id. Nullable only for legacy/local rows until they log in.
+    auth_user_id text unique,
     username varchar(50) not null unique,
     full_name varchar(120) not null,
     role app_user_role not null,
@@ -27,8 +29,8 @@ create table app_users (
     updated_at timestamptz not null default now()
 );
 
--- Credential storage for the username/password marketplace API. The table is
--- never queried directly by the JavaFX client.
+-- Legacy/local credential storage. Neon Auth owns credentials in the public
+-- deployment; this table is never queried directly by the JavaFX client.
 create table app_credentials (
     user_id bigint primary key references app_users(id) on delete cascade,
     password_hash text not null,

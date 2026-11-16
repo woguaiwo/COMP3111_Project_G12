@@ -31,43 +31,56 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Client-side adapter for the deployed Neon Function.
+ * Client-side adapter for Neon Data API + Managed Neon Auth.
  *
- * <p>The JavaFX process only knows the public function URL and the access
- * token returned by login. It never receives {@code DATABASE_URL}, the JWT
- * signing key, or a password hash.</p>
+ * <p>The JavaFX process only knows public HTTPS endpoints. Passwords are sent
+ * to Neon Auth, while marketplace operations go through one protected
+ * PostgreSQL RPC. No database connection string, owner password, or password
+ * hash is shipped to users.</p>
  */
 public class HttpMarketplaceDataService implements MarketplaceDataService {
 
     private final String baseUrl;
+    private final String authUrl;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    private volatile String authCookie;
+    private volatile String authJwt;
+    private volatile Instant authJwtExpiresAt;
+
     public HttpMarketplaceDataService(String baseUrl) {
+        this(baseUrl, NeonConfig.authUrl());
+    }
+
+    public HttpMarketplaceDataService(String baseUrl, String authUrl) {
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new IllegalArgumentException("Marketplace API URL is required");
         }
         this.baseUrl = baseUrl.replaceAll("/+$", "");
+        if (authUrl == null || authUrl.isBlank()) {
+            throw new IllegalArgumentException("Neon Auth URL is required");
+        }
+        this.authUrl = authUrl.replaceAll("/+$", "");
     }
 
     /**
-     * Checks the public Function without requiring an application session.
-     * This lets a local developer with a DATABASE_URL use JDBC when a network
-     * blocks the Function endpoint, while public clients continue using HTTP.
+     * Checks the public Data API endpoint. A 401 is expected without a JWT and
+     * still proves that the endpoint is reachable.
      */
     public boolean isAvailable() {
         try {
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/health"))
+                    .uri(URI.create(baseUrl + "/"))
                     .timeout(Duration.ofSeconds(3))
                     .header("Accept", "application/json")
                     .GET()
                     .build();
             HttpResponse<Void> response = httpClient.send(
                     request, HttpResponse.BodyHandlers.discarding());
-            return response.statusCode() >= 200 && response.statusCode() < 300;
+            return response.statusCode() < 500;
         } catch (IOException e) {
             return false;
         } catch (InterruptedException e) {
@@ -78,59 +91,72 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
 
     @Override
     public boolean usernameExists(String username) {
-        JsonNode result = request("GET", "/auth/check-username?username=" + encode(username), null, false);
+        // Neon Data API requires a JWT even for its anonymous database role.
+        // Registration still performs the authoritative uniqueness check in
+        // ensure_profile after Neon Auth creates the session.
+        if (authJwt == null || authJwt.isBlank()) return false;
+        JsonNode result = callAction("check_username", Map.of("username", username), true);
         return !result.path("available").asBoolean(true);
     }
 
     @Override
     public User findUser(String username) {
-        return toUser(request("GET", "/api/users/" + encode(username), null, true));
+        return toUser(callAction("user", Map.of("username", username), true));
     }
 
     @Override
     public AuthSession login(String username, String password) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("username", username);
-        body.put("password", password);
+        authCookie = null;
+        authJwt = null;
+        authJwtExpiresAt = null;
         JsonNode result;
         try {
-            result = request("POST", "/auth/login", body, false);
+            result = authRequest("/sign-in/email", Map.of(
+                    "email", authEmail(username), "password", password), false);
         } catch (JdbcMarketplaceDataService.DataAccessException e) {
-            if (e.getMessage() != null && e.getMessage().startsWith("401:")) {
-                return null;
-            }
+            if (e.getMessage() != null && e.getMessage().startsWith("401:")) return null;
             throw e;
         }
-        String token = result.path("token").asText(null);
-        if (token == null || token.isBlank()) {
-            throw failure("API did not return an access token");
-        }
-        long expiresAt = result.path("expiresAt").asLong(0);
-        return new AuthSession(toUser(result.path("user")), token,
-                expiresAt > 0 ? Instant.ofEpochSecond(expiresAt) : null);
+        if (result == null) return null;
+        String token = refreshAuthJwt();
+        JsonNode profile = callAction("ensure_profile", Map.of("role", "BUYER", "fullName", username), true);
+        return new AuthSession(toUser(profile), token, authJwtExpiresAt);
     }
 
     @Override
     public void logout() {
-        if (SessionManager.getAccessToken() == null) {
-            return;
+        if (authCookie != null) {
+            try {
+                authRequest("/sign-out", Map.of(), true);
+            } finally {
+                authCookie = null;
+                authJwt = null;
+                authJwtExpiresAt = null;
+            }
         }
-        request("POST", "/auth/logout", Map.of(), true);
     }
 
     @Override
     public void registerUser(User user) {
+        authCookie = null;
+        authJwt = null;
+        authJwtExpiresAt = null;
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("username", user.getUsername());
-        body.put("fullName", user.getFullName());
+        body.put("email", authEmail(user.getUsername()));
+        body.put("name", user.getFullName());
         body.put("password", user.getPasswordHash());
-        body.put("role", user.getRole().name());
-        body.put("residenceHall", user.getResidenceHall());
-        body.put("bio", user.getBio());
-        body.put("preferredMeetup", user.getPreferredMeetup());
-        JsonNode result = request("POST", "/auth/register", body, false);
-        copyUser(toUser(result.path("user")), user);
+        authRequest("/sign-up/email", body, false);
+        refreshAuthJwt();
+        Map<String, Object> profile = new LinkedHashMap<>();
+        profile.put("role", user.getRole().name());
+        profile.put("fullName", user.getFullName());
+        profile.put("residenceHall", user.getResidenceHall());
+        profile.put("bio", user.getBio());
+        profile.put("preferredMeetup", user.getPreferredMeetup());
+        copyUser(toUser(callAction("ensure_profile", profile, true)), user);
         user.setPasswordHash(null);
+        // Registration does not log the user in at the application layer.
+        logout();
     }
 
     @Override
@@ -256,27 +282,65 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
     }
 
     private JsonNode request(String method, String path, Object body, boolean authenticated) {
+        URI relative = URI.create(path);
+        String route = relative.getPath();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (body != null) {
+            payload.putAll(objectMapper.convertValue(body, Map.class));
+        }
+        Map<String, String> query = query(relative.getRawQuery());
+        String action;
+        if (route.equals("/auth/check-username")) {
+            action = "check_username";
+            payload.put("username", query.get("username"));
+        } else if (route.equals("/api/users")) {
+            action = "users";
+            if (query.containsKey("role")) payload.put("role", query.get("role"));
+        } else if (route.startsWith("/api/users/")) {
+            action = "user";
+            payload.put("username", decode(route.substring("/api/users/".length())));
+        } else if (route.equals("/api/listings")) {
+            if ("POST".equalsIgnoreCase(method)) {
+                action = "create_listing";
+            } else {
+                action = "listings";
+                if (query.containsKey("status")) payload.put("status", query.get("status"));
+                if (query.containsKey("seller")) payload.put("seller", query.get("seller"));
+            }
+        } else if (route.startsWith("/api/listings/")) {
+            String id = decode(route.substring("/api/listings/".length()));
+            payload.put("id", id);
+            action = "GET".equalsIgnoreCase(method) ? "listing"
+                    : "PUT".equalsIgnoreCase(method) ? "update_listing" : "delete_listing";
+        } else if (route.equals("/api/deals")) {
+            action = "POST".equalsIgnoreCase(method) ? "create_deal" : "deals";
+            if (query.containsKey("buyer")) payload.put("buyer", query.get("buyer"));
+        } else if (route.equals("/api/notifications")) {
+            action = "POST".equalsIgnoreCase(method) ? "create_notification" : "notifications";
+            if (query.containsKey("username")) payload.put("username", query.get("username"));
+        } else if (route.equals("/api/reviews")) {
+            action = "POST".equalsIgnoreCase(method) ? "create_review" : "reviews";
+            if (query.containsKey("seller")) payload.put("seller", query.get("seller"));
+        } else {
+            throw failure("Unknown marketplace route: " + path);
+        }
+        return callAction(action, payload, authenticated);
+    }
+
+    private JsonNode callAction(String action, Map<String, ?> payload, boolean authenticated) {
         try {
+            ObjectNode arguments = objectMapper.createObjectNode();
+            arguments.put("p_action", action);
+            arguments.set("p_payload", objectMapper.valueToTree(payload));
+            String token = authenticated ? currentAuthToken() : null;
             HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + path))
-                    .header("Accept", "application/json");
-            if (body != null) {
-                builder.header("Content-Type", "application/json");
-            }
-            if (authenticated) {
-                String token = SessionManager.getAccessToken();
-                if (token == null || token.isBlank()) {
-                    throw failure("No active API session");
-                }
-                builder.header("Authorization", "Bearer " + token);
-            }
-            String requestBody = body == null ? "" : objectMapper.writeValueAsString(body);
-            HttpRequest.BodyPublisher publisher = body == null
-                    ? HttpRequest.BodyPublishers.noBody()
-                    : HttpRequest.BodyPublishers.ofString(requestBody);
+                    .uri(URI.create(baseUrl + "/rpc/marketplace_api"))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json");
+            if (token != null && !token.isBlank()) builder.header("Authorization", "Bearer " + token);
             HttpResponse<String> response = httpClient.send(
-                    builder.timeout(Duration.ofSeconds(15))
-                            .method(method, publisher).build(),
+                    builder.POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(arguments))).build(),
                     HttpResponse.BodyHandlers.ofString());
             JsonNode result;
             try {
@@ -290,16 +354,133 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
                         : response.body().trim());
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                String message = result.path("error").asText("Marketplace API request failed");
+                String message = result.path("error").asText(
+                        result.path("message").asText("Marketplace API request failed"));
                 throw failure(response.statusCode() + ": " + message);
             }
-            return result;
+            if (result.has("ok") && !result.path("ok").asBoolean()) {
+                throw failure(result.path("error").asText("Marketplace operation failed"));
+            }
+            return result.has("data") ? result.path("data") : result;
         } catch (IOException e) {
             throw failure("connect to marketplace API", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw failure("complete marketplace API request", e);
         }
+    }
+
+    private JsonNode authRequest(String path, Map<String, ?> body, boolean withSession) {
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(authUrl + path))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .header("Origin", "http://localhost");
+            if (withSession && authCookie != null) builder.header("Cookie", authCookie);
+            HttpResponse<String> response = httpClient.send(
+                    builder.POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body))).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            captureCookie(response);
+            JsonNode result = response.body() == null || response.body().isBlank()
+                    ? objectMapper.createObjectNode() : objectMapper.readTree(response.body());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                String message = result.path("message").asText(
+                        result.path("error").asText("Neon Auth request failed"));
+                throw failure(response.statusCode() + ": " + message);
+            }
+            return result;
+        } catch (IOException e) {
+            throw failure("connect to Neon Auth", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw failure("complete Neon Auth request", e);
+        }
+    }
+
+    private String refreshAuthJwt() {
+        if (authCookie == null || authCookie.isBlank()) throw failure("No active Neon Auth session");
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(authUrl + "/get-session"))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Accept", "application/json")
+                    .header("Origin", "http://localhost")
+                    .header("Cookie", authCookie)
+                    .GET().build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw failure(response.statusCode() + ": Neon Auth session is no longer valid");
+            }
+            String jwt = response.headers().firstValue("set-auth-jwt").orElse(null);
+            if (jwt == null || jwt.isBlank()) throw failure("Neon Auth did not return an access JWT");
+            authJwt = jwt;
+            authJwtExpiresAt = jwtExpiry(jwt);
+            return jwt;
+        } catch (IOException e) {
+            throw failure("refresh Neon Auth session", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw failure("refresh Neon Auth session", e);
+        }
+    }
+
+    private String currentAuthToken() {
+        if (authJwt != null && authJwtExpiresAt != null
+                && Instant.now().isBefore(authJwtExpiresAt.minusSeconds(20))) {
+            return authJwt;
+        }
+        if (authCookie != null && !authCookie.isBlank()) return refreshAuthJwt();
+        String token = SessionManager.getAccessToken();
+        if (token == null || token.isBlank()) throw failure("No active API session");
+        return token;
+    }
+
+    private void captureCookie(HttpResponse<?> response) {
+        List<String> cookies = response.headers().allValues("set-cookie");
+        if (cookies.isEmpty()) return;
+        StringBuilder value = new StringBuilder();
+        for (String cookie : cookies) {
+            int separator = cookie.indexOf(';');
+            String pair = separator < 0 ? cookie : cookie.substring(0, separator);
+            if (value.length() > 0) value.append("; ");
+            value.append(pair);
+        }
+        authCookie = value.toString();
+    }
+
+    private static Instant jwtExpiry(String jwt) {
+        try {
+            String[] parts = jwt.split("\\.");
+            String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            long exp = new ObjectMapper().readTree(payload).path("exp").asLong(0);
+            return exp > 0 ? Instant.ofEpochSecond(exp) : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String authEmail(String username) {
+        return username == null ? "" : username.trim().toLowerCase(Locale.ROOT) + "@marketplace.invalid";
+    }
+
+    private static Map<String, String> query(String rawQuery) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (rawQuery == null || rawQuery.isBlank()) return result;
+        for (String pair : rawQuery.split("&")) {
+            String[] parts = pair.split("=", 2);
+            String key = decode(parts[0]);
+            String value = parts.length == 1 ? "" : decode(parts[1]);
+            result.put(key, value);
+        }
+        return result;
+    }
+
+    private static String decode(String value) {
+        return java.net.URLDecoder.decode(value == null ? "" : value,
+                java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private Map<String, Object> listingBody(Listing listing) {

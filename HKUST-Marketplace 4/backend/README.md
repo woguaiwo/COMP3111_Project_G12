@@ -1,23 +1,24 @@
-# Marketplace API
+# Marketplace backend notes
 
-The JavaFX application talks to the `marketplaceapi` Neon Function. The
-function owns the Neon connection string, password verification, HMAC JWT
-signing key, and revocable session table. Clients only receive the public
-function URL and a short-lived access token.
+The JavaFX application uses the public Neon Data API and Managed Neon Auth.
+Neon Auth handles password verification and sessions. The Data API exposes only
+the protected `public.marketplace_api(action, payload)` PostgreSQL function; the
+marketplace tables and credentials are never granted to the client.
 
-The function is deployed to the Neon `dev` branch with:
+The former `marketplaceapi` Neon Function is retained as a legacy backend but is
+not selected by the client. The current deployment is configured with:
 
 ```powershell
-neon functions deploy marketplaceapi `
-  --project-id <project-id> --branch dev `
-  --src backend/functions/marketplace-api --runtime nodejs24 --wait `
-  --env JWT_SECRET=<random-secret>
+neon data-api create `
+  --project-id <project-id> --branch dev --database neondb `
+  --auth-provider neon_auth --db-schemas public --openapi-mode disabled
 ```
 
-Neon injects `DATABASE_URL` into the function. Generate a fresh `JWT_SECRET`
-for every deployed environment and keep it out of Git. Apply
-`database/migrations/002_app_sessions.sql` before deploying the function.
+Apply [`database/migrations/003_data_api_marketplace.sql`](../database/migrations/003_data_api_marketplace.sql)
+with the Neon SQL Editor or a trusted migration connection, then refresh the
+Data API schema cache. Do not enable default table grants; only the RPC should
+be callable by authenticated users.
 
-For local JavaFX runs, use the deployed URL placed in `NeonConfig`. Set
+The public Data API and Neon Auth URLs are safe to embed in the client. Set
 `MARKETPLACE_MODE=jdbc` or `MARKETPLACE_MODE=demo` in an ignored local
 environment file only when developing without the public API.

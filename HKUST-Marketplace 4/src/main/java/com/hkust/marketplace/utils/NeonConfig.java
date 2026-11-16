@@ -9,23 +9,27 @@ import java.util.List;
 /**
  * Reads the optional local Neon connection configuration.
  *
- * <p>The released application contains only the public Function URL. During
- * team development a database URL may be supplied through an ignored local
- * file to select the JDBC fallback.</p>
+ * <p>The released application contains only public Data API and Neon Auth
+ * URLs. During team development a database URL may be supplied through an
+ * ignored local file when JDBC mode is explicitly selected.</p>
  */
 public final class NeonConfig {
 
     private static final String DATABASE_URL = "DATABASE_URL";
     private static final String MARKETPLACE_API_URL = "MARKETPLACE_API_URL";
+    private static final String NEON_AUTH_URL = "NEON_AUTH_URL";
     private static final String MARKETPLACE_MODE = "MARKETPLACE_MODE";
 
     /**
-     * Filled with the deployed Neon Function URL after deployment. Keeping the
-     * URL in the client is safe; the database connection string and JWT secret
-     * stay exclusively in the function environment.
+     * Filled with the public Neon Data API URL. The URL contains no database
+     * credential; all application operations are protected by Neon Auth JWTs
+     * and the database RPC grants.
      */
     private static final String DEFAULT_API_URL =
-            "https://br-dawn-dust-b3f6mcny-marketplaceapi.compute.c-4.ap-southeast-1.aws.neon.tech";
+            "https://ep-bold-union-b3s1wwyz.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
+
+    private static final String DEFAULT_AUTH_URL =
+            "https://ep-bold-union-b3s1wwyz.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
 
     private NeonConfig() {
     }
@@ -59,6 +63,20 @@ public final class NeonConfig {
         );
     }
 
+    public static String authUrl() {
+        if (isDemoMode() || isJdbcMode()) {
+            return null;
+        }
+        return firstNonBlank(
+                System.getenv(NEON_AUTH_URL),
+                System.getProperty(NEON_AUTH_URL),
+                readFromDotEnv(Path.of("backend", ".env.local"), NEON_AUTH_URL),
+                readFromDotEnv(Path.of("backend", ".env"), NEON_AUTH_URL),
+                readFromDotEnv(Path.of(".env.local"), NEON_AUTH_URL),
+                DEFAULT_AUTH_URL
+        );
+    }
+
     /**
      * Selects the original in-memory demo instead of contacting Neon.
      * This is useful for Scene Builder/UI work without network access.
@@ -68,7 +86,7 @@ public final class NeonConfig {
         return "demo".equalsIgnoreCase(mode) || "offline".equalsIgnoreCase(mode);
     }
 
-    private static boolean isJdbcMode() {
+    public static boolean isJdbcMode() {
         return "jdbc".equalsIgnoreCase(marketplaceMode());
     }
 

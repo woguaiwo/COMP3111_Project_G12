@@ -1,8 +1,8 @@
 # Neon database exploration
 
-The JavaFX client uses `DummyDataService` as a compatibility facade. In the shared deployment it calls the authenticated Neon Function API; this folder defines the PostgreSQL schema used by that API. Set `MARKETPLACE_MODE=jdbc` for a local JDBC run or `MARKETPLACE_MODE=demo` for an offline UI preview.
+The JavaFX client uses `DummyDataService` as a compatibility facade. In the shared deployment it calls Neon Data API and Managed Neon Auth; this folder defines the PostgreSQL schema and RPC used by that path. Set `MARKETPLACE_MODE=jdbc` for a local JDBC run or `MARKETPLACE_MODE=demo` for an offline UI preview.
 
-The public path is `HttpMarketplaceDataService -> marketplaceapi Neon Function -> Neon PostgreSQL`. A local `DATABASE_URL` selects the JDBC adapter when `MARKETPLACE_MODE=jdbc`; if the public Function is unreachable and that local URL exists, the client falls back to JDBC automatically. The original in-memory demo is selected with `MARKETPLACE_MODE=demo`.
+The public path is `HttpMarketplaceDataService -> Neon Auth + Data API RPC -> Neon PostgreSQL`. A local `DATABASE_URL` selects the JDBC adapter only when `MARKETPLACE_MODE=jdbc` is explicitly set. The original in-memory demo is selected with `MARKETPLACE_MODE=demo`.
 
 ## Recommended shape
 
@@ -12,7 +12,7 @@ JavaFX client → HTTPS API or trusted Java backend → Neon PostgreSQL
 
 Do not put a Neon owner password or an unrestricted database URL in a released desktop application. A quick JDBC prototype can read `DATABASE_URL` from the local environment, but the final application should keep the database connection on a server or a Neon Function and expose only authenticated operations to JavaFX.
 
-Neon also provides a PostgREST-compatible Data API. This project keeps it disabled because the custom username-only API owns authorization and signs its own short-lived JWTs. The schema enables RLS with no policies so an accidentally exposed Data API starts closed.
+Neon Data API is enabled for the `public` schema with the Neon Auth provider and OpenAPI disabled. The schema keeps RLS enabled and grants the Data API only the `marketplace_api` SECURITY DEFINER function. That function reads the authenticated JWT subject from the request claims, maps it to `app_users.auth_user_id`, and returns only DTO-shaped JSON.
 
 ## Project members are not application users
 
@@ -50,7 +50,7 @@ The browser login stores the CLI authorization locally. Do not paste the token o
 
 For a team based around HKUST, choose **AWS Asia Pacific (Singapore)**. It is the closest available Neon region in the current region list; choose the same region as the API server later if the server is deployed elsewhere. Neon fixes a project's region when it is created, so choose it carefully.
 
-Enable **Postgres** (required) and **Functions** (the deployed API runs there). Managed Better Auth may remain enabled in the Console, but it is not used by the current username-only flow. Keep **Object Storage**, **AI Gateway**, and **Data API** disabled until the product needs them.
+Enable **Postgres** (required), **Data API**, and **Better Auth / Neon Auth**. The current client does not need Object Storage, AI Gateway, Realtime, or Functions.
 
 ## Mapping to the current skeleton
 
@@ -64,9 +64,9 @@ Enable **Postgres** (required) and **Functions** (the deployed API runs there). 
 | `Notification` | `notifications` |
 | `DummyDataService` | compatibility facade over HTTP/JDBC/in-memory modes |
 
-Authentication is intentionally separate from `app_users`. The deployed Function writes PBKDF2 hashes to `app_credentials`, signs short-lived HMAC JWTs, and records revocable sessions in `app_sessions`; application users never need Neon project membership.
+Neon Auth owns password hashes and sessions. The migration adds `app_users.auth_user_id` and the RPC maps each Auth account to the marketplace profile. Application users never need Neon project membership.
 
-The JDBC adapter also stores PBKDF2 hashes in `app_credentials` for local team development. Do not distribute its connection string. Public clients use the backend Function and its JWT session instead.
+The JDBC adapter still stores PBKDF2 hashes in `app_credentials` for explicit local team development. Do not distribute its connection string. Public clients use Neon Auth and the Data API JWT instead.
 
 ## Run the JavaFX app with Neon persistence
 
@@ -81,4 +81,4 @@ The first run against an empty `dev` database copies the demo records into Neon.
 
 ## Public-user deployment
 
-Apply `migrations/002_app_sessions.sql`, deploy `backend/functions/marketplace-api`, and distribute the JavaFX client. End users register and log in inside the application; they do not need a Neon account or an invitation to the Neon organization. Keep `database/.env` and `backend/.env.local` local and ignored.
+Apply `migrations/003_data_api_marketplace.sql`, refresh the Data API schema, and distribute the JavaFX client. End users register and log in inside the application; they do not need a Neon Console account or an invitation to the Neon organization. Keep `database/.env` and `backend/.env.local` local and ignored.

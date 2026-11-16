@@ -28,7 +28,7 @@ Requirements:
 | Seller | `charlie` | `password1` |
 | Seller | `diana` | `password1` |
 
-The released client uses the public `marketplaceapi` Neon Function. It sends only HTTPS requests and a short-lived JWT; it never contains a Neon connection string or password hash. The seeded accounts above are available in the shared `dev` branch, and new buyers/sellers register with a username, full name, and password without creating a Neon account. A local `DATABASE_URL` is supported as a development-only JDBC fallback when `MARKETPLACE_MODE=jdbc` is selected; if the API is unreachable and that local URL exists, the client also selects JDBC automatically.
+The released client uses Neon Data API and Neon Auth over HTTPS. It never contains a Neon connection string or password hash. The seeded accounts above are available in the shared `dev` branch, and new buyers/sellers register with a username, full name, and password in the application; the synthetic Auth email is internal and users do not need Neon Console membership. A local `DATABASE_URL` is used only when `MARKETPLACE_MODE=jdbc` is explicitly selected.
 
 ## Preview individual FXML files in Scene Builder
 
@@ -56,7 +56,7 @@ For the complete styling and navigation, use `mvnw.cmd javafx:run`; the applicat
 
 ## Neon database and external-user mode
 
-The compatibility facade still exposes `DummyDataService` to the existing controllers, but it now prefers [`HttpMarketplaceDataService`](src/main/java/com/hkust/marketplace/utils/HttpMarketplaceDataService.java), backed by the deployed Neon Function. The function owns `DATABASE_URL`, PBKDF2 verification, HMAC JWT signing, and revocable `app_sessions` rows. `SessionManager` keeps the token only in memory and logout revokes the server-side session. Set `MARKETPLACE_MODE=demo` for the original in-memory UI data or `MARKETPLACE_MODE=jdbc` for a local JDBC development run. Follow [`backend/README.md`](backend/README.md) and [`database/README.md`](database/README.md) for deployment and schema details. Never put a real Neon connection string or `JWT_SECRET` in Git or in a released JavaFX client.
+The compatibility facade still exposes `DummyDataService` to the existing controllers, but it now prefers [`HttpMarketplaceDataService`](src/main/java/com/hkust/marketplace/utils/HttpMarketplaceDataService.java), backed by the public Neon Data API and Managed Neon Auth. Neon Auth verifies passwords and issues the JWT used by the protected `marketplace_api` PostgreSQL RPC; RLS and function grants keep the tables closed. `SessionManager` keeps the token only in memory. Set `MARKETPLACE_MODE=demo` for the original in-memory UI data or `MARKETPLACE_MODE=jdbc` for a local JDBC development run. Follow [`backend/README.md`](backend/README.md) and [`database/README.md`](database/README.md) for deployment and schema details. Never put a real Neon connection string in Git or in a released JavaFX client.
 
 ## Project layout
 
@@ -93,4 +93,4 @@ In IntelliJ IDEA, open this folder as a Maven project and run `MarketplaceApp.ja
 
 ## Current scope
 
-The screens demonstrate the intended UI and interaction flow. External users now use the authenticated API for users, listings, deals, notifications, and reviews; direct JDBC and in-memory data remain explicit local development modes. Neon Auth is not used for this username-only flow, so application users do not need Neon invitations or Neon sign-up accounts.
+The screens demonstrate the intended UI and interaction flow. External users use the authenticated Data API for users, listings, deals, notifications, and reviews; direct JDBC and in-memory data remain explicit local development modes. Application users do not need Neon invitations or Neon Console accounts.
