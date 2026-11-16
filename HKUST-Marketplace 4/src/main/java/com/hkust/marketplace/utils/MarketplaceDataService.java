@@ -47,6 +47,21 @@ public interface MarketplaceDataService {
 
     List<User> getUsersByRole(UserRole role);
 
+    /**
+     * Updates a user's editable profile information.
+     */
+    void updateUser(User user);
+
+    /**
+     * Activates or deactivates a user account.
+     */
+    void setUserActive(String username, boolean active);
+
+    /**
+     * Permanently deletes a user account.
+     */
+    void deleteUser(String username);
+
     Collection<Listing> getAllListings();
 
     List<Listing> getLiveListings();

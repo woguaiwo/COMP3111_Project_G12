@@ -5,6 +5,7 @@ import com.hkust.marketplace.utils.DummyDataService;
 import com.hkust.marketplace.utils.SceneManager;
 import com.hkust.marketplace.utils.SessionManager;
 import javafx.collections.FXCollections;
+import javafx.collections.transformation.FilteredList;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -177,93 +178,299 @@ public class AdminDashboardController {
         contentPane.getChildren().add(scroll);
     }
 
+
     @FXML
     private void showUsers() {
         setActive(btnUsers, "Manage All Users");
         contentPane.getChildren().clear();
-
         VBox root = new VBox(12);
         root.setPadding(new Insets(4));
-
-        for (User u : DummyDataService.getInstance().getAllUsers()) {
-            if (u.getRole() == UserRole.ADMIN) continue;
-
-            HBox row = new HBox(12);
-            row.getStyleClass().add("card");
-            row.setAlignment(Pos.CENTER_LEFT);
-            row.setPadding(new Insets(12));
-
-            VBox info = new VBox(3);
-            HBox.setHgrow(info, Priority.ALWAYS);
-            Label name = new Label(u.getFullName() + " (@" + u.getUsername() + ")");
-            name.setStyle("-fx-font-weight: bold;");
-            Label role = new Label(u.getRole().name() + (u.isActive() ? " · Active" : " · Deactivated"));
-            role.setStyle("-fx-text-fill: #5a5a7a; -fx-font-size: 12px;");
-            info.getChildren().addAll(name, role);
-
-            Button edit = new Button("Edit");
-            edit.getStyleClass().addAll("btn-outline", "btn-sm");
-            edit.setOnAction(e -> new Alert(Alert.AlertType.INFORMATION, "Edit user dialog (demo).").showAndWait());
-
-            Button toggle = new Button(u.isActive() ? "Deactivate" : "Activate");
-            toggle.getStyleClass().addAll(u.isActive() ? "btn-danger" : "btn-success", "btn-sm");
-            toggle.setOnAction(e -> {
-                u.setActive(!u.isActive());
-                showUsers();
-            });
-
-            Button delete = new Button("Delete");
-            delete.getStyleClass().addAll("btn-danger", "btn-sm");
-            delete.setOnAction(e -> {
-                Alert conf = new Alert(Alert.AlertType.CONFIRMATION,
-                        "Permanently delete user @" + u.getUsername() + "?");
-                conf.showAndWait().ifPresent(r -> {
-                    if (r == ButtonType.OK) {
-                        u.setActive(false);
-                        new Alert(Alert.AlertType.INFORMATION, "User deactivated (demo safety).").showAndWait();
-                        showUsers();
-                    }
+        try {
+            for (User u : DummyDataService.getInstance().getAllUsers()) {
+                if (u.getRole() == UserRole.ADMIN) continue;
+                HBox row = new HBox(12);
+                row.getStyleClass().add("card");
+                row.setAlignment(Pos.CENTER_LEFT);
+                row.setPadding(new Insets(12));
+                VBox info = new VBox(3);
+                HBox.setHgrow(info, Priority.ALWAYS);
+                Label name = new Label(
+                        u.getFullName() + " (@" + u.getUsername() + ")"
+                );
+                name.setStyle("-fx-font-weight: bold;");
+                Label role = new Label(
+                        u.getRole().name()
+                                + (u.isActive() ? " · Active" : " · Deactivated")
+                );
+                role.setStyle("-fx-text-fill: #5a5a7a; -fx-font-size: 12px;");
+                info.getChildren().addAll(name, role);
+                // Edit user profile
+                Button edit = new Button("Edit");
+                edit.getStyleClass().addAll("btn-outline", "btn-sm");
+                edit.setOnAction(e -> editUser(u));
+                // Activate / deactivate user
+                Button toggle = new Button(
+                        u.isActive() ? "Deactivate" : "Activate"
+                );
+                toggle.getStyleClass().addAll(
+                        u.isActive() ? "btn-danger" : "btn-success",
+                        "btn-sm"
+                );
+                toggle.setOnAction(e -> {
+                    String action = u.isActive() ? "deactivate" : "activate";
+                    Alert confirm = new Alert(
+                            Alert.AlertType.CONFIRMATION,
+                            "Are you sure you want to " + action
+                                    + " user @" + u.getUsername() + "?"
+                    );
+                    confirm.setHeaderText("Confirm Account Status Change");
+                    confirm.showAndWait().ifPresent(result -> {
+                        if (result == ButtonType.OK) {
+                            try {
+                                DummyDataService.getInstance().setUserActive(
+                                        u.getUsername(),
+                                        !u.isActive()
+                                );
+                                showUsers();
+                            } catch (Exception ex) {
+                                showError("Unable to change account status", ex);
+                            }
+                        }
+                    });
                 });
-            });
-
-            row.getChildren().addAll(info, edit, toggle, delete);
-            root.getChildren().add(row);
+                // Permanent deletion is not implemented yet
+                Button delete = new Button("Delete");
+                delete.getStyleClass().addAll("btn-danger", "btn-sm");
+                delete.setDisable(true);
+                delete.setTooltip(
+                        new Tooltip("Permanent deletion is not implemented yet.")
+                );
+                row.getChildren().addAll(info, edit, toggle, delete);
+                root.getChildren().add(row);
+            }
+            if (root.getChildren().isEmpty()) {
+                root.getChildren().add(new Label("No Buyer or Seller accounts found."));
+            }
+        } catch (Exception ex) {
+            showError("Unable to load users", ex);
         }
         ScrollPane scroll = new ScrollPane(root);
         scroll.setFitToWidth(true);
         contentPane.getChildren().add(scroll);
     }
 
+    private void editUser(User user) {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Edit User");
+        dialog.setHeaderText(
+                "Edit profile for @" + user.getUsername()
+        );
+
+        ButtonType saveButton = new ButtonType(
+                "Save Changes",
+                ButtonBar.ButtonData.OK_DONE
+        );
+
+        dialog.getDialogPane().getButtonTypes().addAll(
+                saveButton,
+                ButtonType.CANCEL
+        );
+
+        TextField fullNameField = new TextField(user.getFullName());
+        TextField hallField = new TextField(
+                user.getResidenceHall() == null ? "" : user.getResidenceHall()
+        );
+        TextField bioField = new TextField(
+                user.getBio() == null ? "" : user.getBio()
+        );
+        TextField meetupField = new TextField(
+                user.getPreferredMeetup() == null
+                        ? "" : user.getPreferredMeetup()
+        );
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(12);
+        grid.setPadding(new Insets(15));
+
+        grid.add(new Label("Username:"), 0, 0);
+        grid.add(new Label(user.getUsername()), 1, 0);
+
+        grid.add(new Label("Full Name:"), 0, 1);
+        grid.add(fullNameField, 1, 1);
+
+        grid.add(new Label("Residence Hall:"), 0, 2);
+        grid.add(hallField, 1, 2);
+
+        grid.add(new Label("Bio:"), 0, 3);
+        grid.add(bioField, 1, 3);
+
+        grid.add(new Label("Preferred Meetup:"), 0, 4);
+        grid.add(meetupField, 1, 4);
+
+        dialog.getDialogPane().setContent(grid);
+
+        dialog.showAndWait().ifPresent(result -> {
+            if (result == saveButton) {
+                if (fullNameField.getText().isBlank()) {
+                    new Alert(
+                            Alert.AlertType.WARNING,
+                            "Full name cannot be empty."
+                    ).showAndWait();
+                    return;
+                }
+
+                try {
+                    User updatedUser = new User();
+                    updatedUser.setUsername(user.getUsername());
+                    updatedUser.setRole(user.getRole());
+                    updatedUser.setFullName(fullNameField.getText().trim());
+                    updatedUser.setResidenceHall(hallField.getText().trim());
+                    updatedUser.setBio(bioField.getText().trim());
+                    updatedUser.setPreferredMeetup(meetupField.getText().trim());
+
+                    DummyDataService.getInstance().updateUser(updatedUser);
+
+                    new Alert(
+                            Alert.AlertType.INFORMATION,
+                            "User profile updated successfully."
+                    ).showAndWait();
+
+                    showUsers();
+
+                } catch (Exception ex) {
+                    showError("Unable to update user profile", ex);
+                }
+            }
+        });
+    }
+
+    private void showError(String title, Exception ex) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle("Operation Failed");
+        alert.setHeaderText(title);
+        alert.setContentText(
+                ex.getMessage() == null
+                        ? "An unexpected error occurred."
+                        : ex.getMessage()
+        );
+        alert.showAndWait();
+    }
+
     @FXML
     private void showDeals() {
         setActive(btnDeals, "All Deals Record");
         contentPane.getChildren().clear();
-
         VBox root = new VBox(12);
         root.setPadding(new Insets(4));
-
+        // Search and type filters
         HBox filters = new HBox(10);
         filters.setAlignment(Pos.CENTER_LEFT);
         TextField search = new TextField();
-        search.setPromptText("Search by item / user...");
-        ComboBox<String> typeFilter = new ComboBox<>(FXCollections.observableArrayList("All Types", "Sell", "Lend", "Giveaway"));
+        search.setPromptText("Search by item / buyer / seller...");
+        search.setPrefWidth(280);
+        ComboBox<String> typeFilter = new ComboBox<>(
+                FXCollections.observableArrayList(
+                        "All Types", "Sell", "Lend", "Giveaway"
+                )
+        );
         typeFilter.getSelectionModel().selectFirst();
         filters.getChildren().addAll(search, typeFilter);
         root.getChildren().add(filters);
-
+        // Table columns
         TableView<String[]> table = new TableView<>();
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        String[] headers = {"Item", "Buyer", "Seller", "Type", "Status", "Date"};
+        table.setColumnResizePolicy(
+                TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN
+        );
+        String[] headers = {
+                "Item", "Buyer", "Seller", "Type",
+                "Start Date", "Return / Complete Date", "Status"
+        };
         for (int i = 0; i < headers.length; i++) {
-            final int idx = i;
-            TableColumn<String[], String> col = new TableColumn<>(headers[i]);
-            col.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(c.getValue()[idx]));
-            table.getColumns().add(col);
+            final int columnIndex = i;
+            TableColumn<String[], String> column =
+                    new TableColumn<>(headers[i]);
+            column.setCellValueFactory(cell ->
+                    new javafx.beans.property.SimpleStringProperty(
+                            cell.getValue()[columnIndex]
+                    )
+            );
+            table.getColumns().add(column);
         }
-        table.setItems(FXCollections.observableArrayList(
-                new String[]{"Calculus Textbook", "alice", "charlie", "Sell", "Accepted", "2026-01-15"},
-                new String[]{"USB Hub", "bob", "diana", "Giveaway", "Completed", "2025-12-01"}
-        ));
+        // Retrieve actual deal records through the data service
+        List<Deal> deals = DummyDataService.getInstance().getAllDeals();
+        DateTimeFormatter dateFormat =
+                DateTimeFormatter.ofPattern("dd MMM yyyy");
+        javafx.collections.ObservableList<String[]> dealRows =
+                FXCollections.observableArrayList();
+        for (Deal deal : deals) {
+            String item = deal.getListingTitle() == null
+                    ? "—" : deal.getListingTitle();
+            String buyer = deal.getBuyerUsername() == null
+                    ? "—" : deal.getBuyerUsername();
+            String seller = deal.getSellerUsername() == null
+                    ? "—" : deal.getSellerUsername();
+            String type = deal.getDealType() == null
+                    ? "Unknown"
+                    : switch (deal.getDealType()) {
+                case SELL -> "Sell";
+                case LEND -> "Lend";
+                case GIVEAWAY -> "Giveaway";
+            };
+            // Use borrowing start date when available.
+            // Otherwise, use the date the deal was created.
+            String startDate = "—";
+            if (deal.getBorrowStart() != null) {
+                startDate = deal.getBorrowStart().format(dateFormat);
+            } else if (deal.getCreatedAt() != null) {
+                startDate = deal.getCreatedAt()
+                        .toLocalDate()
+                        .format(dateFormat);
+            }
+            // For lending, show the expected return date.
+            // For completed transactions, show the completion date.
+            String endDate = "—";
+            if (deal.getBorrowEnd() != null) {
+                endDate = deal.getBorrowEnd().format(dateFormat);
+            } else if (deal.getCompletedAt() != null) {
+                endDate = deal.getCompletedAt()
+                        .toLocalDate()
+                        .format(dateFormat);
+            }
+            String status = deal.getStatus() == null
+                    ? "—" : deal.getStatus();
+            dealRows.add(new String[]{
+                    item, buyer, seller, type,
+                    startDate, endDate, status
+            });
+        }
+        // Enable searching and filtering without changing database records
+        FilteredList<String[]> filteredDeals =
+                new FilteredList<>(dealRows, row -> true);
+        Runnable applyFilters = () -> {
+            String keyword = search.getText() == null
+                    ? "" : search.getText().trim().toLowerCase();
+            String selectedType = typeFilter.getValue();
+            filteredDeals.setPredicate(row -> {
+                boolean matchesSearch =
+                        (row[0] + " " + row[1] + " " + row[2])
+                                .toLowerCase()
+                                .contains(keyword);
+                boolean matchesType =
+                        selectedType == null
+                                || selectedType.equals("All Types")
+                                || row[3].equalsIgnoreCase(selectedType);
+                return matchesSearch && matchesType;
+            });
+        };
+        search.textProperty().addListener(
+                (observable, oldValue, newValue) -> applyFilters.run()
+        );
+        typeFilter.valueProperty().addListener(
+                (observable, oldValue, newValue) -> applyFilters.run()
+        );
+        table.setItems(filteredDeals);
+        table.setPlaceholder(new Label("No deal records found."));
         root.getChildren().add(table);
         contentPane.getChildren().add(root);
     }

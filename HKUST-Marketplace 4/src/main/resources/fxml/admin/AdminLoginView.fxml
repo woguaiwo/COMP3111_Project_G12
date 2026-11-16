@@ -40,7 +40,5 @@
 
             <Hyperlink text="← Back to Welcome" onAction="#goWelcome"/>
         </VBox>
-        <Label text="Seeded credential: admin / admin123"
-               style="-fx-text-fill: #a0b8d0; -fx-font-size: 12px; -fx-padding: 12 0 0 0;"/>
     </VBox>
 </StackPane>

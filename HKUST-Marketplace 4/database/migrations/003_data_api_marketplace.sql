@@ -34,6 +34,7 @@ declare
     v_id bigint;
     v_seller_id bigint;
     v_result jsonb;
+    v_active boolean;
     v_existing app_users%rowtype;
     v_actor app_users%rowtype;
 begin
@@ -146,6 +147,89 @@ begin
           from app_users u
          where v_role is null or u.role::text = v_role;
         return jsonb_build_object('ok', true, 'data', v_result);
+    end if;
+
+        -- Admin: update a buyer or seller profile.
+    if v_action = 'admin_update_user' then
+        if v_actor.role <> 'ADMIN'::app_user_role then
+            raise exception 'Administrator access required';
+    end if;
+        v_username := lower(trim(coalesce(v_payload ->> 'username', '')));
+        if v_username = '' then
+            raise exception 'Username is required';
+    end if;
+    select * into v_existing
+    from app_users
+    where lower(username) = v_username;
+    if not found then
+                raise exception 'User not found';
+    end if;
+            if v_existing.role = 'ADMIN'::app_user_role then
+                raise exception 'Admin accounts cannot be edited here';
+    end if;
+            if nullif(trim(v_payload ->> 'fullName'), '') is null
+               or length(trim(v_payload ->> 'fullName')) > 120 then
+                raise exception 'A valid full name is required';
+    end if;
+    update app_users
+    set full_name = trim(v_payload ->> 'fullName'),
+        residence_hall = nullif(trim(v_payload ->> 'residenceHall'), ''),
+        bio = nullif(trim(v_payload ->> 'bio'), ''),
+        preferred_meetup = nullif(trim(v_payload ->> 'preferredMeetup'), ''),
+        updated_at = now()
+    where id = v_existing.id
+        returning * into v_existing;
+    select jsonb_build_object(
+                   'username', u.username,
+                   'fullName', u.full_name,
+                   'role', u.role::text,
+                   'residenceHall', u.residence_hall,
+                   'bio', u.bio,
+                   'preferredMeetup', u.preferred_meetup,
+                   'active', u.is_active,
+                   'averageRating', u.average_rating,
+                   'ratingCount', u.rating_count,
+                   'createdAt', u.created_at
+           ) into v_result
+    from app_users u
+    where u.id = v_existing.id;
+    return jsonb_build_object('ok', true, 'data', v_result);
+    end if;
+
+        -- Admin: activate or deactivate a buyer or seller account.
+        if v_action = 'admin_set_user_active' then
+            if v_actor.role <> 'ADMIN'::app_user_role then
+                raise exception 'Administrator access required';
+    end if;
+            v_username := lower(trim(coalesce(v_payload ->> 'username', '')));
+            if v_username = '' then
+                raise exception 'Username is required';
+    end if;
+            if coalesce(lower(v_payload ->> 'active'), '') not in ('true', 'false') then
+                raise exception 'A valid active status is required';
+    end if;
+            v_active := (v_payload ->> 'active')::boolean;
+    select * into v_existing
+    from app_users
+    where lower(username) = v_username;
+    if not found then
+                raise exception 'User not found';
+    end if;
+
+            if v_existing.role = 'ADMIN'::app_user_role then
+                raise exception 'Admin accounts cannot be deactivated here';
+    end if;
+    update app_users
+    set is_active = v_active,
+        updated_at = now()
+    where id = v_existing.id;
+    return jsonb_build_object(
+            'ok', true,
+            'data', jsonb_build_object(
+                    'username', v_existing.username,
+                    'active', v_active
+                    )
+           );
     end if;
 
     if v_action = 'listings' then

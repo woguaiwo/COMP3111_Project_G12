@@ -176,6 +176,39 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
     }
 
     @Override
+    public void updateUser(User user) {
+        if (user == null || user.getUsername() == null
+                || user.getUsername().isBlank()) {
+            throw new IllegalArgumentException("Invalid user.");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("username", user.getUsername());
+        payload.put("fullName", user.getFullName());
+        payload.put("residenceHall", user.getResidenceHall());
+        payload.put("bio", user.getBio());
+        payload.put("preferredMeetup", user.getPreferredMeetup());
+        User updated = toUser(
+                callAction("admin_update_user", payload, true)
+        );
+        copyUser(updated, user);
+    }
+
+    @Override
+    public void setUserActive(String username, boolean active) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("username", username);
+        payload.put("active", active);
+        callAction("admin_set_user_active", payload, true);
+    }
+
+    @Override
+    public void deleteUser(String username) {
+        throw new UnsupportedOperationException(
+                "Permanent deletion requires Neon Auth account deletion support."
+        );
+    }
+
+    @Override
     public Collection<Listing> getAllListings() {
         return toListings(request("GET", "/api/listings?status=ALL", null, true));
     }

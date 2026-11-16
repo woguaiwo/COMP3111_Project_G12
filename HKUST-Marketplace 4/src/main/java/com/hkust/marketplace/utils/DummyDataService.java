@@ -270,6 +270,56 @@ public class DummyDataService implements MarketplaceDataService {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public void updateUser(User user) {
+        if (user == null || user.getUsername() == null
+                || user.getUsername().isBlank()) {
+            throw new IllegalArgumentException("Invalid user.");
+        }
+        if (backend != null) {
+            backend.updateUser(user);
+            return;
+        }
+        String key = user.getUsername().toLowerCase(Locale.ROOT);
+        User existing = users.get(key);
+        if (existing == null) {
+            throw new IllegalArgumentException("User not found.");
+        }
+        existing.setFullName(user.getFullName());
+        existing.setResidenceHall(user.getResidenceHall());
+        existing.setBio(user.getBio());
+        existing.setPreferredMeetup(user.getPreferredMeetup());
+    }
+
+    @Override
+    public void setUserActive(String username, boolean active) {
+        if (backend != null) {
+            backend.setUserActive(username, active);
+            return;
+        }
+        User user = findUser(username);
+        if (user == null) {
+            throw new IllegalArgumentException("User not found.");
+        }
+        if (user.getRole() == UserRole.ADMIN) {
+            throw new IllegalArgumentException(
+                    "Admin accounts cannot be deactivated here."
+            );
+        }
+        user.setActive(active);
+    }
+
+    @Override
+    public void deleteUser(String username) {
+        if (backend != null) {
+            backend.deleteUser(username);
+            return;
+        }
+        throw new UnsupportedOperationException(
+                "Permanent user deletion is not implemented yet."
+        );
+    }
+
     // ========== Listing methods ==========
     @Override
     public Collection<Listing> getAllListings() {

@@ -361,6 +361,60 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
     }
 
     @Override
+    public void updateUser(User user) {
+        String sql = """
+            UPDATE app_users
+               SET full_name = ?,
+                   residence_hall = ?,
+                   bio = ?,
+                   preferred_meetup = ?
+             WHERE lower(username) = lower(?)
+            """;
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, user.getFullName());
+            statement.setString(2, user.getResidenceHall());
+            statement.setString(3, user.getBio());
+            statement.setString(4, user.getPreferredMeetup());
+            statement.setString(5, user.getUsername());
+            if (statement.executeUpdate() == 0) {
+                throw new DataAccessException("User not found.");
+            }
+        } catch (SQLException e) {
+            throw failure("update user", e);
+        }
+    }
+
+    @Override
+    public void setUserActive(String username, boolean active) {
+        String sql = """
+            UPDATE app_users
+               SET is_active = ?
+             WHERE lower(username) = lower(?)
+               AND role <> 'ADMIN'::app_user_role
+            """;
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setBoolean(1, active);
+            statement.setString(2, username);
+            if (statement.executeUpdate() == 0) {
+                throw new DataAccessException(
+                        "User not found or cannot deactivate an admin account."
+                );
+            }
+        } catch (SQLException e) {
+            throw failure("change user active status", e);
+        }
+    }
+
+    @Override
+    public void deleteUser(String username) {
+        throw new UnsupportedOperationException(
+                "Permanent deletion is not implemented yet."
+        );
+    }
+
+    @Override
     public Collection<Listing> getAllListings() {
         return queryListings(LISTING_SELECT + " ORDER BY l.created_at DESC", null);
     }
