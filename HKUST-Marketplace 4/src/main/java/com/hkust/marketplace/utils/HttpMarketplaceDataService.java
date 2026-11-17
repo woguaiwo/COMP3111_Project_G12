@@ -194,6 +194,42 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
     }
 
     @Override
+    public void updateAdminProfile(String username, String fullName) {
+        if (fullName == null || fullName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Full Name cannot be empty.");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("username", username);
+        payload.put("full_name", fullName.trim());
+        callAction("admin_update_profile", payload, true);
+    }
+
+    @Override
+    public void changeAdminPassword(
+            String username,
+            String currentPassword,
+            String newPassword
+    ) {
+        if (currentPassword == null || currentPassword.isBlank()) {
+            throw new IllegalArgumentException("Current password cannot be empty.");
+        }
+        String validation = DummyDataService.checkPasswordStrength(newPassword);
+        if (!"OK".equals(validation)) {
+            throw new IllegalArgumentException(validation);
+        }
+        if (authCookie == null || authCookie.isBlank()) {
+            throw new IllegalStateException(
+                    "Your Neon Auth session has expired. Please log in again."
+            );
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("currentPassword", currentPassword);
+        payload.put("newPassword", newPassword);
+        payload.put("revokeOtherSessions", true);
+        authRequest("/change-password", payload, true);
+    }
+
+    @Override
     public void setUserActive(String username, boolean active) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("username", username);
@@ -248,6 +284,13 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
     @Override
     public void removeListing(String id) {
         request("DELETE", "/api/listings/" + encode(id), null, true);
+    }
+
+    @Override
+    public void adminRemoveListing(String id, String reason) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("reason", reason);
+        request("POST", "/api/admin/listings/" + encode(id), body, true);
     }
 
     @Override
@@ -329,6 +372,10 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         } else if (route.equals("/api/users")) {
             action = "users";
             if (query.containsKey("role")) payload.put("role", query.get("role"));
+        } else if (route.startsWith("/api/admin/listings/")) {
+            String id = decode(route.substring("/api/admin/listings/".length()));
+            payload.put("id", id);
+            action = "admin_remove_listing";
         } else if (route.startsWith("/api/users/")) {
             action = "user";
             payload.put("username", decode(route.substring("/api/users/".length())));
@@ -527,6 +574,7 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         body.put("price", listing.getPrice());
         body.put("lendingDays", listing.getLendingDays());
         body.put("meetupLocation", listing.getMeetupLocation());
+        body.put("sellerUsername", listing.getSellerUsername());
         body.put("reviewedAt", listing.getReviewedAt() == null
                 ? null : listing.getReviewedAt().toString());
         body.put("rejectionReason", listing.getRejectionReason());
@@ -599,6 +647,7 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         listing.setPostedAt(dateTime(node, "postedAt"));
         listing.setReviewedAt(dateTime(node, "reviewedAt"));
         listing.setRejectionReason(nullableText(node, "rejectionReason"));
+        listing.setRemovalReason(nullableText(node, "removalReason"));
         listing.setViewCount(node.path("viewCount").asInt(0));
         List<String> photos = new ArrayList<>();
         node.path("photoPaths").forEach(photo -> photos.add(photo.asText()));
@@ -679,6 +728,7 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         to.setPostedAt(from.getPostedAt());
         to.setReviewedAt(from.getReviewedAt());
         to.setRejectionReason(from.getRejectionReason());
+        to.setRemovalReason(from.getRemovalReason());
         to.setViewCount(from.getViewCount());
         to.setPhotoPaths(from.getPhotoPaths());
     }

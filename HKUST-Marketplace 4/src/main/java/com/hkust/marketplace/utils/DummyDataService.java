@@ -320,6 +320,44 @@ public class DummyDataService implements MarketplaceDataService {
         );
     }
 
+    @Override
+    public void updateAdminProfile(String username, String fullName) {
+        if (backend != null) {
+            backend.updateAdminProfile(username, fullName);
+            return;
+        }
+        if (fullName == null || fullName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Full Name cannot be empty.");
+        }
+        User user = users.get(username);
+        if (user == null) {
+            throw new IllegalArgumentException("Admin account not found.");
+        }
+        if (user.getRole() != UserRole.ADMIN) {
+            throw new IllegalArgumentException("Only Admin can update this profile.");
+        }
+        user.setFullName(fullName.trim());
+    }
+
+    @Override
+    public void changeAdminPassword(
+            String username,
+            String currentPassword,
+            String newPassword
+    ) {
+        if (backend != null) {
+            backend.changeAdminPassword(
+                    username,
+                    currentPassword,
+                    newPassword
+            );
+            return;
+        }
+        throw new UnsupportedOperationException(
+                "Password changes require Neon Auth or JDBC mode."
+        );
+    }
+
     // ========== Listing methods ==========
     @Override
     public Collection<Listing> getAllListings() {
@@ -385,6 +423,23 @@ public class DummyDataService implements MarketplaceDataService {
             return;
         }
         listings.remove(id);
+    }
+
+    @Override
+    public void adminRemoveListing(String id, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("Removal reason is required");
+        }
+        if (backend != null) {
+            backend.adminRemoveListing(id, reason.trim());
+            return;
+        }
+        Listing listing = listings.get(id);
+        if (listing == null) {
+            throw new IllegalArgumentException("Listing not found");
+        }
+        listing.setStatus(ListingStatus.REMOVED);
+        listing.setRemovalReason(reason.trim());
     }
 
     // ========== Deal methods ==========

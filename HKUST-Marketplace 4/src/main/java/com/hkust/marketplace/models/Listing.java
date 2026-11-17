@@ -24,6 +24,7 @@ public class Listing {
     private LocalDateTime postedAt;
     private LocalDateTime reviewedAt;
     private String rejectionReason;
+    private String removalReason;
     private int viewCount;
     private List<String> photoPaths = new ArrayList<>(); // Demo: placeholder paths
 
@@ -78,6 +79,9 @@ public class Listing {
 
     public String getRejectionReason() { return rejectionReason; }
     public void setRejectionReason(String rejectionReason) { this.rejectionReason = rejectionReason; }
+
+    public String getRemovalReason() { return removalReason; }
+    public void setRemovalReason(String removalReason) { this.removalReason = removalReason; }
 
     public int getViewCount() { return viewCount; }
     public void setViewCount(int viewCount) { this.viewCount = viewCount; }

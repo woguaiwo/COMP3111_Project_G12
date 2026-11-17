@@ -386,6 +386,103 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
     }
 
     @Override
+    public void updateAdminProfile(String username, String fullName) {
+        if (fullName == null || fullName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Full Name cannot be empty.");
+        }
+        String sql = """
+        UPDATE app_users
+           SET full_name = ?
+         WHERE lower(username) = lower(?)
+           AND role = 'ADMIN'::app_user_role
+        """;
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, fullName.trim());
+            statement.setString(2, username);
+            if (statement.executeUpdate() == 0) {
+                throw new DataAccessException("Admin account not found.");
+            }
+        } catch (SQLException e) {
+            throw failure("update admin profile", e);
+        }
+    }
+
+    @Override
+    public void changeAdminPassword(
+            String username,
+            String currentPassword,
+            String newPassword
+    ) {
+        if (currentPassword == null || currentPassword.isBlank()) {
+            throw new IllegalArgumentException("Current password cannot be empty.");
+        }
+        String validation = DummyDataService.checkPasswordStrength(newPassword);
+        if (!"OK".equals(validation)) {
+            throw new IllegalArgumentException(validation);
+        }
+        String selectSql = """
+        SELECT c.password_hash
+          FROM app_credentials c
+          JOIN app_users u ON u.id = c.user_id
+         WHERE lower(u.username) = lower(?)
+           AND u.role = 'ADMIN'::app_user_role
+           AND u.is_active = true
+        """;
+        String updateSql = """
+        UPDATE app_credentials
+           SET password_hash = ?
+         WHERE user_id = (
+             SELECT id
+               FROM app_users
+              WHERE lower(username) = lower(?)
+                AND role = 'ADMIN'::app_user_role
+         )
+        """;
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try {
+                String storedHash;
+                try (PreparedStatement statement =
+                             connection.prepareStatement(selectSql)) {
+                    statement.setString(1, username);
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (!result.next()) {
+                            throw new IllegalArgumentException(
+                                    "Admin account not found."
+                            );
+                        }
+                        storedHash = result.getString("password_hash");
+                    }
+                }
+                if (!PasswordHasher.matches(currentPassword, storedHash)) {
+                    throw new IllegalArgumentException(
+                            "Current password is incorrect."
+                    );
+                }
+                try (PreparedStatement statement =
+                             connection.prepareStatement(updateSql)) {
+                    statement.setString(1, PasswordHasher.hash(newPassword));
+                    statement.setString(2, username);
+                    if (statement.executeUpdate() == 0) {
+                        throw new IllegalArgumentException(
+                                "Admin account not found."
+                        );
+                    }
+                }
+                connection.commit();
+            } catch (SQLException | RuntimeException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw failure("change admin password", e);
+        }
+    }
+
+    @Override
     public void setUserActive(String username, boolean active) {
         String sql = """
             UPDATE app_users
@@ -527,6 +624,34 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
             statement.executeUpdate();
         } catch (SQLException e) {
             throw failure("remove listing", e);
+        }
+    }
+
+    @Override
+    public void adminRemoveListing(String id, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("Removal reason is required");
+        }
+        Long listingId = numericId(id, "L");
+        if (listingId == null) {
+            throw new DataAccessException("Invalid listing id");
+        }
+        String sql = """
+            UPDATE listings
+               SET status = 'REMOVED'::listing_status,
+                   removal_reason = ?,
+                   updated_at = now()
+             WHERE id = ?
+            """;
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, reason.trim());
+            statement.setLong(2, listingId);
+            if (statement.executeUpdate() == 0) {
+                throw new DataAccessException("Listing not found");
+            }
+        } catch (SQLException e) {
+            throw failure("admin remove listing", e);
         }
     }
 

@@ -62,6 +62,14 @@ public interface MarketplaceDataService {
      */
     void deleteUser(String username);
 
+    void updateAdminProfile(String username, String fullName);
+
+    void changeAdminPassword(
+            String username,
+            String currentPassword,
+            String newPassword
+    );
+
     Collection<Listing> getAllListings();
 
     List<Listing> getLiveListings();
@@ -77,6 +85,8 @@ public interface MarketplaceDataService {
     void updateListing(Listing listing);
 
     void removeListing(String id);
+
+    void adminRemoveListing(String id, String reason);
 
     List<Deal> getDealsForBuyer(String username);
 

@@ -10,6 +10,9 @@ create unique index if not exists app_users_auth_user_id_idx
     on app_users (auth_user_id)
     where auth_user_id is not null;
 
+ALTER TABLE public.listings
+    ADD COLUMN IF NOT EXISTS removal_reason text;
+
 create or replace function public.marketplace_api(
     p_action text,
     p_payload jsonb default '{}'::jsonb
@@ -232,6 +235,39 @@ begin
            );
     end if;
 
+    --Admin update self profile
+    IF v_action = 'admin_update_profile' THEN
+    -- Only an authenticated Admin can update this profile.
+    IF v_actor.role <> 'ADMIN'::app_user_role THEN
+        RAISE EXCEPTION 'Admin access required';
+END IF;
+    -- Validate Full Name.
+    IF NULLIF(TRIM(v_payload->>'full_name'), '') IS NULL THEN
+        RAISE EXCEPTION 'Full Name cannot be empty';
+END IF;
+    IF LENGTH(TRIM(v_payload->>'full_name')) > 120 THEN
+        RAISE EXCEPTION 'Full Name cannot exceed 120 characters';
+END IF;
+    -- Prevent an Admin from updating another account.
+    IF v_payload ? 'username'
+       AND LOWER(TRIM(v_payload->>'username')) <> LOWER(v_actor.username) THEN
+        RAISE EXCEPTION 'You can only update your own profile';
+END IF;
+    -- Update only the currently authenticated Admin.
+UPDATE public.app_users
+SET full_name = TRIM(v_payload->>'full_name'),
+    updated_at = NOW()
+WHERE id = v_actor.id
+    RETURNING * INTO v_actor;
+RETURN jsonb_build_object(
+        'ok', true,
+        'data', jsonb_build_object(
+                'username', v_actor.username,
+                'fullName', v_actor.full_name
+                )
+       );
+END IF;
+
     if v_action = 'listings' then
         v_status := upper(coalesce(nullif(v_payload ->> 'status', ''), 'LIVE'));
         v_seller := nullif(lower(trim(v_payload ->> 'seller')), '');
@@ -251,7 +287,8 @@ begin
             'lendingDays', l.lending_days, 'meetupLocation', l.meetup_location,
             'sellerUsername', u.username, 'sellerFullName', u.full_name,
             'postedAt', l.created_at, 'reviewedAt', l.reviewed_at,
-            'rejectionReason', l.rejection_reason, 'viewCount', l.view_count,
+            'rejectionReason', l.rejection_reason, 'removalReason', l.removal_reason,
+            'viewCount', l.view_count,
             'photoPaths', coalesce((select jsonb_agg(lp.storage_path order by lp.sort_order)
                                     from listing_photos lp where lp.listing_id = l.id), '[]'::jsonb)
         ) order by l.created_at desc), '[]'::jsonb)
@@ -279,6 +316,7 @@ begin
             'meetupLocation', l.meetup_location, 'sellerUsername', u.username,
             'sellerFullName', u.full_name, 'postedAt', l.created_at,
             'reviewedAt', l.reviewed_at, 'rejectionReason', l.rejection_reason,
+            'removalReason', l.removal_reason,
             'viewCount', l.view_count,
             'photoPaths', coalesce((select jsonb_agg(lp.storage_path order by lp.sort_order)
                                     from listing_photos lp where lp.listing_id = l.id), '[]'::jsonb)
@@ -288,35 +326,69 @@ begin
         return jsonb_build_object('ok', true, 'data', v_result);
     end if;
 
-    if v_action = 'create_listing' then
-        if v_actor.role not in ('SELLER'::app_user_role, 'ADMIN'::app_user_role) then
-            raise exception 'Seller access required';
-        end if;
-        v_type := upper(coalesce(v_payload ->> 'type', ''));
-        if v_type not in ('SELL', 'LEND', 'GIVEAWAY') then raise exception 'Invalid listing type'; end if;
-        insert into listings
-            (seller_id, title, description, category, type, status, item_condition,
-             price, lending_days, meetup_location)
-        values
-            (v_actor.id, trim(v_payload ->> 'title'), nullif(trim(v_payload ->> 'description'), ''),
-             trim(v_payload ->> 'category'), v_type::listing_type, 'PENDING_REVIEW',
-             trim(v_payload ->> 'condition'),
-             case when v_type = 'SELL' then nullif(v_payload ->> 'price', '')::numeric end,
-             case when v_type = 'LEND' then nullif(v_payload ->> 'lendingDays', '')::integer end,
-             trim(v_payload ->> 'meetupLocation'))
+            if v_action = 'create_listing' then
+            if v_actor.role not in ('SELLER'::app_user_role, 'ADMIN'::app_user_role) then
+                raise exception 'Seller access required';
+    end if;
+
+            -- Sellers can only create listings for themselves.
+            -- Admins must select an active Seller account.
+            if v_actor.role = 'ADMIN'::app_user_role then
+                v_username := lower(trim(coalesce(v_payload ->> 'sellerUsername', '')));
+
+                if v_username = '' then
+                    raise exception 'Please select a seller';
+    end if;
+
+    select id into v_seller_id
+    from app_users
+    where lower(username) = v_username
+      and role = 'SELLER'::app_user_role
+                   and is_active = true;
+
+    if not found then
+                    raise exception 'Selected seller does not exist or is inactive';
+    end if;
+    else
+                v_seller_id := v_actor.id;
+    end if;
+
+            v_type := upper(coalesce(v_payload ->> 'type', ''));
+            if v_type not in ('SELL', 'LEND', 'GIVEAWAY') then
+                raise exception 'Invalid listing type';
+    end if;
+
+    insert into listings
+    (seller_id, title, description, category, type, status, item_condition,
+     price, lending_days, meetup_location)
+    values
+        (v_seller_id, trim(v_payload ->> 'title'),
+         nullif(trim(v_payload ->> 'description'), ''),
+         trim(v_payload ->> 'category'), v_type::listing_type, 'PENDING_REVIEW',
+         trim(v_payload ->> 'condition'),
+         case when v_type = 'SELL' then nullif(v_payload ->> 'price', '')::numeric end,
+         case when v_type = 'LEND' then nullif(v_payload ->> 'lendingDays', '')::integer end,
+         trim(v_payload ->> 'meetupLocation'))
         returning id into v_id;
-        v_payload := jsonb_build_object('id', 'L' || v_id);
-        -- Reuse the read path for the complete DTO.
-        select jsonb_build_object(
-            'id', 'L' || l.id, 'title', l.title, 'description', l.description,
-            'category', l.category, 'type', l.type::text, 'status', l.status::text,
-            'condition', l.item_condition, 'price', l.price, 'lendingDays', l.lending_days,
-            'meetupLocation', l.meetup_location, 'sellerUsername', u.username,
-            'sellerFullName', u.full_name, 'postedAt', l.created_at,
-            'reviewedAt', l.reviewed_at, 'rejectionReason', l.rejection_reason,
-            'viewCount', l.view_count, 'photoPaths', '[]'::jsonb
-        ) into v_result from listings l join app_users u on u.id = l.seller_id where l.id = v_id;
-        return jsonb_build_object('ok', true, 'data', v_result);
+
+    v_payload := jsonb_build_object('id', 'L' || v_id);
+
+            -- Return the complete listing DTO with the actual seller's details.
+    select jsonb_build_object(
+                   'id', 'L' || l.id, 'title', l.title, 'description', l.description,
+                   'category', l.category, 'type', l.type::text, 'status', l.status::text,
+                   'condition', l.item_condition, 'price', l.price, 'lendingDays', l.lending_days,
+                   'meetupLocation', l.meetup_location, 'sellerUsername', u.username,
+                   'sellerFullName', u.full_name, 'postedAt', l.created_at,
+                   'reviewedAt', l.reviewed_at, 'rejectionReason', l.rejection_reason,
+                   'removalReason', l.removal_reason,
+                   'viewCount', l.view_count, 'photoPaths', '[]'::jsonb
+           ) into v_result
+    from listings l
+             join app_users u on u.id = l.seller_id
+    where l.id = v_id;
+
+    return jsonb_build_object('ok', true, 'data', v_result);
     end if;
 
     if v_action = 'update_listing' then
@@ -329,7 +401,18 @@ begin
         v_type := upper(coalesce(v_payload ->> 'type', ''));
         v_status := upper(coalesce(v_payload ->> 'status', 'PENDING_REVIEW'));
         if v_type not in ('SELL', 'LEND', 'GIVEAWAY') then raise exception 'Invalid listing type'; end if;
-        if v_status not in ('PENDING_REVIEW', 'LIVE', 'SOLD', 'REJECTED', 'CLOSED') then raise exception 'Invalid listing status'; end if;
+        if v_status not in (
+            'PENDING_REVIEW',
+            'LIVE',
+            'REJECTED',
+            'RESERVED',
+            'SOLD',
+            'LENT',
+            'GIVEN',
+            'REMOVED'
+        ) then
+            raise exception 'Invalid listing status';
+        end if;
         if v_actor.role <> 'ADMIN'::app_user_role then v_status := 'PENDING_REVIEW'; end if;
         update listings set title = trim(v_payload ->> 'title'),
             description = nullif(trim(v_payload ->> 'description'), ''), category = trim(v_payload ->> 'category'),
@@ -349,10 +432,46 @@ begin
             'meetupLocation', l.meetup_location, 'sellerUsername', u.username,
             'sellerFullName', u.full_name, 'postedAt', l.created_at,
             'reviewedAt', l.reviewed_at, 'rejectionReason', l.rejection_reason,
+            'removalReason', l.removal_reason,
             'viewCount', l.view_count, 'photoPaths', '[]'::jsonb
         ) into v_result from listings l join app_users u on u.id = l.seller_id where l.id = v_id;
         return jsonb_build_object('ok', true, 'data', v_result);
     end if;
+
+        if v_action = 'admin_remove_listing' then
+        -- Only Admin can take down a listing.
+        if v_actor.role <> 'ADMIN'::app_user_role then
+            raise exception 'Administrator access required';
+end if;
+
+        v_id := nullif(
+            regexp_replace(coalesce(v_payload ->> 'id', ''), '^L', '', 'i'),
+            ''
+        )::bigint;
+
+        if not exists (
+            select 1 from listings where id = v_id
+        ) then
+            raise exception 'Listing not found';
+end if;
+
+        -- A removal reason is mandatory.
+        if nullif(trim(coalesce(v_payload ->> 'reason', '')), '') is null then
+            raise exception 'Removal reason is required';
+end if;
+
+        -- Soft removal: preserve the listing record.
+update listings
+set status = 'REMOVED'::listing_status,
+            removal_reason = trim(v_payload ->> 'reason'),
+            updated_at = now()
+where id = v_id;
+
+return jsonb_build_object(
+        'ok', true,
+        'data', jsonb_build_object('ok', true)
+       );
+end if;
 
     if v_action = 'delete_listing' then
         v_id := nullif(regexp_replace(coalesce(v_payload ->> 'id', ''), '^L', '', 'i'), '')::bigint;

@@ -7,7 +7,16 @@ begin;
 
 create type app_user_role as enum ('BUYER', 'SELLER', 'ADMIN');
 create type listing_type as enum ('SELL', 'LEND', 'GIVEAWAY');
-create type listing_status as enum ('PENDING_REVIEW', 'LIVE', 'SOLD', 'REJECTED', 'CLOSED');
+create type listing_status as enum (
+    'PENDING_REVIEW',
+    'LIVE',
+    'REJECTED',
+    'RESERVED',
+    'SOLD',
+    'LENT',
+    'GIVEN',
+    'REMOVED'
+);
 create type deal_status as enum ('PENDING', 'ACCEPTED', 'COMPLETED', 'RETURNED', 'CANCELLED');
 
 create table app_users (
@@ -60,6 +69,7 @@ create table listings (
     meetup_location varchar(160) not null,
     reviewed_at timestamptz,
     rejection_reason text,
+    removal_reason text,
     view_count integer not null default 0 check (view_count >= 0),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
