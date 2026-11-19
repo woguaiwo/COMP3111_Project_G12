@@ -226,8 +226,8 @@ public class AdminDashboardController {
                 Button remove = new Button("Remove");
                 remove.getStyleClass().addAll("btn-danger", "btn-sm");
 
-                // A removed listing cannot be taken down again.
-                remove.setDisable(l.getStatus() == ListingStatus.REMOVED);
+                // Only LIVE listings can be taken down by Admin.
+                remove.setDisable(l.getStatus() != ListingStatus.LIVE);
 
                 remove.setOnAction(e -> {
                     TextInputDialog reasonDialog = new TextInputDialog();

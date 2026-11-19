@@ -438,40 +438,77 @@ END IF;
         return jsonb_build_object('ok', true, 'data', v_result);
     end if;
 
+
         if v_action = 'admin_remove_listing' then
-        -- Only Admin can take down a listing.
-        if v_actor.role <> 'ADMIN'::app_user_role then
-            raise exception 'Administrator access required';
-end if;
+            -- Only Admin can take down a listing.
+            if v_actor.role <> 'ADMIN'::app_user_role then
+                raise exception 'Administrator access required';
+        end if;
 
-        v_id := nullif(
-            regexp_replace(coalesce(v_payload ->> 'id', ''), '^L', '', 'i'),
-            ''
-        )::bigint;
+            v_id := nullif(
+                regexp_replace(coalesce(v_payload ->> 'id', ''), '^L', '', 'i'),
+                ''
+            )::bigint;
 
-        if not exists (
-            select 1 from listings where id = v_id
-        ) then
-            raise exception 'Listing not found';
-end if;
+            -- Check whether the listing exists.
+            if not exists (
+                select 1
+                from listings
+                where id = v_id
+            ) then
+                raise exception 'Listing not found';
+        end if;
 
-        -- A removal reason is mandatory.
-        if nullif(trim(coalesce(v_payload ->> 'reason', '')), '') is null then
-            raise exception 'Removal reason is required';
-end if;
+            -- Only LIVE listings can be taken down.
+            if not exists (
+                select 1
+                from listings
+                where id = v_id
+                  and status = 'LIVE'::listing_status
+            ) then
+                raise exception 'Only LIVE listings can be removed';
+        end if;
 
-        -- Soft removal: preserve the listing record.
-update listings
-set status = 'REMOVED'::listing_status,
-            removal_reason = trim(v_payload ->> 'reason'),
-            updated_at = now()
-where id = v_id;
+            -- A removal reason is mandatory.
+            if nullif(trim(coalesce(v_payload ->> 'reason', '')), '') is null then
+                raise exception 'Removal reason is required';
+        end if;
 
-return jsonb_build_object(
-        'ok', true,
-        'data', jsonb_build_object('ok', true)
-       );
-end if;
+            -- Soft removal: preserve the listing record.
+        update listings
+        set status = 'REMOVED'::listing_status,
+                removal_reason = trim(v_payload ->> 'reason'),
+                updated_at = now()
+        where id = v_id;
+
+        -- Notify buyers who have an active (PENDING) offer.
+        -- DISTINCT ensures each buyer receives only one notification.
+        insert into notifications (
+            recipient_id,
+            title,
+            message,
+            category,
+            is_read
+        )
+        select distinct
+            d.buyer_id,
+            'Listing Removed',
+            'The listing "' || l.title
+                || '" has been removed by the administrator. Reason: '
+                || trim(v_payload ->> 'reason'),
+            'System',
+            false
+        from deals d
+                 join listings l
+                      on l.id = d.listing_id
+        where d.listing_id = v_id
+          and d.status = 'PENDING'::deal_status;
+
+        return jsonb_build_object(
+                'ok', true,
+                'data', jsonb_build_object('ok', true)
+               );
+        end if;
 
     if v_action = 'delete_listing' then
         v_id := nullif(regexp_replace(coalesce(v_payload ->> 'id', ''), '^L', '', 'i'), '')::bigint;
