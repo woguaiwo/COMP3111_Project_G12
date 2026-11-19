@@ -357,6 +357,19 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         copyReview(toReview(saved), review);
     }
 
+    @Override
+    public void setReviewHidden(String reviewId, boolean hidden) {
+        if (reviewId == null || !reviewId.matches("(?i)^R\\d+$")) {
+            throw new IllegalArgumentException("Invalid review ID.");
+        }
+
+        callAction(
+                "admin_set_review_hidden",
+                Map.of("reviewId", reviewId, "hidden", hidden),
+                true
+        );
+    }
+
     private JsonNode request(String method, String path, Object body, boolean authenticated) {
         URI relative = URI.create(path);
         String route = relative.getPath();

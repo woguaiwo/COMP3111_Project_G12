@@ -518,6 +518,23 @@ public class DummyDataService implements MarketplaceDataService {
         reviews.add(r);
     }
 
+    @Override
+    public void setReviewHidden(String reviewId, boolean hidden) {
+        if (backend != null) {
+            backend.setReviewHidden(reviewId, hidden);
+            return;
+        }
+
+        for (Review review : reviews) {
+            if (reviewId != null && reviewId.equals(review.getId())) {
+                review.setHidden(hidden);
+                return;
+            }
+        }
+
+        throw new IllegalArgumentException("Review not found: " + reviewId);
+    }
+
     // Password strength helper (demo)
     public static String checkPasswordStrength(String password) {
         if (password == null || password.isEmpty()) return "Password cannot be empty.";

@@ -608,6 +608,51 @@ END IF;
         return jsonb_build_object('ok', true, 'data', v_result);
     end if;
 
+    if v_action = 'admin_set_review_hidden' then
+    -- Only administrators can hide or unhide reviews.
+    if v_actor.role <> 'ADMIN'::app_user_role then
+        raise exception 'Administrator access required';
+end if;
+
+    -- Convert the application review ID (e.g. R123) to a database ID.
+    v_id := nullif(
+        regexp_replace(
+            coalesce(v_payload ->> 'reviewId', ''),
+            '^R',
+            '',
+            'i'
+        ),
+        ''
+    )::bigint;
+
+    if v_id is null or v_id <= 0 then
+        raise exception 'Invalid review ID';
+end if;
+
+    -- Persist the visibility change.
+update reviews
+set is_hidden = coalesce(
+        (v_payload ->> 'hidden')::boolean,
+        false
+                )
+where id = v_id;
+
+if not found then
+        raise exception 'Review not found';
+end if;
+
+return jsonb_build_object(
+        'ok', true,
+        'data', jsonb_build_object(
+                'id', 'R' || v_id,
+                'hidden', coalesce(
+                        (v_payload ->> 'hidden')::boolean,
+                        false
+                          )
+                )
+       );
+end if;
+
     if v_action = 'create_review' then
         if v_actor.role <> 'BUYER'::app_user_role then raise exception 'Buyer access required'; end if;
         v_id := nullif(regexp_replace(coalesce(v_payload ->> 'listingId', ''), '^L', '', 'i'), '')::bigint;

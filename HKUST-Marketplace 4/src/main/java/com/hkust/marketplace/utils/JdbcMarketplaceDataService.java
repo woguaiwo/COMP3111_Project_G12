@@ -784,6 +784,25 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
         }
     }
 
+    @Override
+    public void setReviewHidden(String reviewId, boolean hidden) {
+        if (reviewId == null || !reviewId.matches("(?i)^R\\d+$")) {
+            throw new IllegalArgumentException("Invalid review ID.");
+        }
+        long id = Long.parseLong(reviewId.substring(1));
+        String sql = "UPDATE reviews SET is_hidden = ? WHERE id = ?";
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setBoolean(1, hidden);
+            statement.setLong(2, id);
+            if (statement.executeUpdate() == 0) {
+                throw new DataAccessException("Review not found.");
+            }
+        } catch (SQLException e) {
+            throw failure("update review visibility", e);
+        }
+    }
+
     private List<Listing> queryListings(String sql, Object parameter) {
         List<Listing> listings = new ArrayList<>();
         try (Connection connection = open();

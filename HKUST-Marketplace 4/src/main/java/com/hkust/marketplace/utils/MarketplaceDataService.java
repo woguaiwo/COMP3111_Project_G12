@@ -103,4 +103,6 @@ public interface MarketplaceDataService {
     List<Review> getAllReviews();
 
     void addReview(Review review);
+
+    void setReviewHidden(String reviewId, boolean hidden);
 }

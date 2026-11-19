@@ -12,6 +12,8 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.DateCell;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -991,48 +993,226 @@ public class AdminDashboardController {
         contentPane.getChildren().add(root);
     }
 
+
     @FXML
     private void showRatings() {
         setActive(btnRatings, "Seller Ratings Overview");
         contentPane.getChildren().clear();
-
         VBox root = new VBox(12);
         root.setPadding(new Insets(4));
 
+        // Filter controls
         HBox filters = new HBox(10);
+        filters.setAlignment(Pos.CENTER_LEFT);
         TextField userFilter = new TextField();
-        userFilter.setPromptText("Filter by seller...");
-        ComboBox<String> scoreFilter = new ComboBox<>(FXCollections.observableArrayList(
-                "All scores", "5 stars", "4 stars", "3 stars", "2 stars", "1 star"));
+        userFilter.setPromptText("Filter by seller username...");
+        userFilter.setPrefWidth(190);
+        ComboBox<String> scoreFilter = new ComboBox<>(
+                FXCollections.observableArrayList(
+                        "All scores",
+                        "5 stars",
+                        "4 stars",
+                        "3 stars",
+                        "2 stars",
+                        "1 star"
+                )
+        );
         scoreFilter.getSelectionModel().selectFirst();
-        filters.getChildren().addAll(userFilter, scoreFilter);
+        scoreFilter.setPrefWidth(120);
+        LocalDate today = LocalDate.now();
+
+        DatePicker fromDate = new DatePicker();
+        fromDate.setPromptText("From date");
+        fromDate.setPrefWidth(135);
+        fromDate.setDayCellFactory(picker -> new DateCell() {
+            @Override
+            public void updateItem(LocalDate date, boolean empty) {
+                super.updateItem(date, empty);
+                setDisable(empty || date.isAfter(today));
+            }
+        });
+
+        DatePicker toDate = new DatePicker();
+        toDate.setPromptText("To date");
+        toDate.setPrefWidth(135);
+        toDate.setDayCellFactory(picker -> new DateCell() {
+            @Override
+            public void updateItem(LocalDate date, boolean empty) {
+                super.updateItem(date, empty);
+                setDisable(empty || date.isAfter(today));
+            }
+        });
+        Button clearFilters = new Button("Clear Filters");
+        clearFilters.getStyleClass().addAll("btn-outline", "btn-sm");
+        filters.getChildren().addAll(
+                userFilter,
+                scoreFilter,
+                fromDate,
+                toDate,
+                clearFilters
+        );
         root.getChildren().add(filters);
 
-        for (Review r : DummyDataService.getInstance().getAllReviews()) {
-            HBox row = new HBox(12);
-            row.getStyleClass().add("card");
-            row.setAlignment(Pos.CENTER_LEFT);
-            row.setPadding(new Insets(12));
+        // Review list
+        VBox reviewList = new VBox(10);
+        root.getChildren().add(reviewList);
+        List<Review> allReviews =
+                DummyDataService.getInstance().getAllReviews();
+        DateTimeFormatter dateFormatter =
+                DateTimeFormatter.ofPattern("dd MMM yyyy");
 
-            VBox info = new VBox(4);
-            HBox.setHgrow(info, Priority.ALWAYS);
-            Label stars = new Label("★".repeat(r.getRating()) + "☆".repeat(5 - r.getRating()) +
-                    "  @" + r.getSellerUsername() + " by @" + r.getBuyerUsername());
-            stars.setStyle("-fx-font-weight: bold;");
-            Label comment = new Label(r.getComment());
-            comment.setWrapText(true);
-            comment.setStyle("-fx-text-fill: #5a5a7a;");
-            info.getChildren().addAll(stars, comment);
+        // Rebuild the displayed list whenever a filter changes.
+        final Runnable[] applyFilters = new Runnable[1];
+        applyFilters[0] = () -> {
+            reviewList.getChildren().clear();
+            String sellerKeyword = userFilter.getText() == null
+                    ? ""
+                    : userFilter.getText().trim().toLowerCase();
+            String selectedScore = scoreFilter.getValue();
+            LocalDate from = fromDate.getValue();
+            LocalDate to = toDate.getValue();
+            if (from != null && to != null && from.isAfter(to)) {
+                Label invalidDate = new Label(
+                        "Invalid date range: From date must not be after To date."
+                );
+                invalidDate.setStyle("-fx-text-fill: #d9534f;");
+                reviewList.getChildren().add(invalidDate);
+                return;
+            }
+            int displayedCount = 0;
+            for (Review r : allReviews) {
+                // Seller username filter (case-insensitive).
+                String seller = r.getSellerUsername() == null
+                        ? ""
+                        : r.getSellerUsername().toLowerCase();
+                if (!seller.contains(sellerKeyword)) {
+                    continue;
+                }
 
-            Button hide = new Button(r.isHidden() ? "Unhide" : "Hide");
-            hide.getStyleClass().addAll("btn-outline", "btn-sm");
-            hide.setOnAction(e -> {
-                r.setHidden(!r.isHidden());
-                showRatings();
-            });
-            row.getChildren().addAll(info, hide);
-            root.getChildren().add(row);
-        }
+                // Rating score filter.
+                if (selectedScore != null
+                        && !selectedScore.equals("All scores")) {
+                    int selectedRating =
+                            Integer.parseInt(selectedScore.substring(0, 1));
+                    if (r.getRating() != selectedRating) {
+                        continue;
+                    }
+                }
+
+                // Date filter (inclusive).
+                LocalDateTime createdAt = r.getCreatedAt();
+                if (from != null || to != null) {
+                    if (createdAt == null) {
+                        continue;
+                    }
+                    LocalDate reviewDate = createdAt.toLocalDate();
+                    if (from != null && reviewDate.isBefore(from)) {
+                        continue;
+                    }
+                    if (to != null && reviewDate.isAfter(to)) {
+                        continue;
+                    }
+                }
+
+                // Build review card.
+                HBox row = new HBox(12);
+                row.getStyleClass().add("card");
+                row.setAlignment(Pos.CENTER_LEFT);
+                row.setPadding(new Insets(12));
+                VBox info = new VBox(4);
+                HBox.setHgrow(info, Priority.ALWAYS);
+                Label stars = new Label(
+                        "★".repeat(r.getRating())
+                                + "☆".repeat(5 - r.getRating())
+                                + "  @" + r.getSellerUsername()
+                                + " by @" + r.getBuyerUsername()
+                );
+                stars.setStyle("-fx-font-weight: bold;");
+                Label comment = new Label(
+                        r.getComment() == null ? "" : r.getComment()
+                );
+                comment.setWrapText(true);
+                comment.setStyle("-fx-text-fill: #5a5a7a;");
+                Label dateLabel = new Label(
+                        createdAt == null
+                                ? "Date unavailable"
+                                : "Submitted: " + createdAt.format(dateFormatter)
+                );
+                dateLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 11px;");
+                info.getChildren().addAll(stars, comment, dateLabel);
+                Button hide = new Button(
+                        r.isHidden() ? "Unhide" : "Hide"
+                );
+                hide.getStyleClass().addAll("btn-outline", "btn-sm");
+                hide.setOnAction(e -> {
+                    boolean newHiddenState = !r.isHidden();
+
+                    Alert confirmation = new Alert(
+                            Alert.AlertType.CONFIRMATION
+                    );
+                    confirmation.setTitle("Confirm Review Visibility");
+                    confirmation.setHeaderText(
+                            newHiddenState ? "Hide this review?" : "Unhide this review?"
+                    );
+                    confirmation.setContentText(
+                            newHiddenState
+                                    ? "This review will no longer be visible to the seller."
+                                    : "This review will become visible to the seller again."
+                    );
+                    confirmation.showAndWait().ifPresent(response -> {
+                        if (response == ButtonType.OK) {
+                            try {
+                                DummyDataService.getInstance()
+                                        .setReviewHidden(r.getId(), newHiddenState);
+
+                                // Update local state only after backend success.
+                                r.setHidden(newHiddenState);
+                                applyFilters[0].run();
+                            } catch (RuntimeException ex) {
+                                Alert error = new Alert(Alert.AlertType.ERROR);
+                                error.setTitle("Update Failed");
+                                error.setHeaderText("Could not update review visibility");
+                                error.setContentText(
+                                        ex.getMessage() == null
+                                                ? "An unexpected error occurred."
+                                                : ex.getMessage()
+                                );
+                                error.showAndWait();
+                            }
+                        }
+                    });
+                });
+                row.getChildren().addAll(info, hide);
+                reviewList.getChildren().add(row);
+                displayedCount++;
+            }
+            if (displayedCount == 0) {
+                Label emptyLabel = new Label("No reviews match the selected filters.");
+                emptyLabel.setStyle("-fx-text-fill: #888888;");
+                reviewList.getChildren().add(emptyLabel);
+            }
+        };
+        // Attach listeners to all filter controls.
+        userFilter.textProperty().addListener(
+                (obs, oldValue, newValue) -> applyFilters[0].run()
+        );
+        scoreFilter.valueProperty().addListener(
+                (obs, oldValue, newValue) -> applyFilters[0].run()
+        );
+        fromDate.valueProperty().addListener(
+                (obs, oldValue, newValue) -> applyFilters[0].run()
+        );
+        toDate.valueProperty().addListener(
+                (obs, oldValue, newValue) -> applyFilters[0].run()
+        );
+        clearFilters.setOnAction(e -> {
+            userFilter.clear();
+            scoreFilter.getSelectionModel().selectFirst();
+            fromDate.setValue(null);
+            toDate.setValue(null);
+        });
+        // Initial display.
+        applyFilters[0].run();
         ScrollPane scroll = new ScrollPane(root);
         scroll.setFitToWidth(true);
         contentPane.getChildren().add(scroll);
