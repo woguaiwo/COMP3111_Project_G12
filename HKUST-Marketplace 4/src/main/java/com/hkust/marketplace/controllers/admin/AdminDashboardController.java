@@ -23,7 +23,8 @@ public class AdminDashboardController {
     @FXML private StackPane contentPane;
     @FXML private Label pageTitle;
     @FXML private Label welcomeLabel;
-    @FXML private Button btnReview, btnAllListings, btnUsers, btnDeals, btnRatings, btnNotifications, btnProfile;
+    @FXML private Button btnReview, btnAllListings, btnUsers, btnDeals,
+            btnRatings, btnReports, btnNotifications, btnProfile;
 
     private Button currentActiveBtn;
 
@@ -705,7 +706,7 @@ public class AdminDashboardController {
         root.setPadding(new Insets(4));
         try {
             for (User u : DummyDataService.getInstance().getAllUsers()) {
-                if (u.getRole() == UserRole.ADMIN) continue;
+                if (u.getRole() == UserRole.ADMIN || u.isDeleted()) continue;
                 HBox row = new HBox(12);
                 row.getStyleClass().add("card");
                 row.setAlignment(Pos.CENTER_LEFT);
@@ -756,13 +757,37 @@ public class AdminDashboardController {
                         }
                     });
                 });
-                // Permanent deletion is not implemented yet
+                // Soft-delete user account (irreversible from Admin UI)
                 Button delete = new Button("Delete");
                 delete.getStyleClass().addAll("btn-danger", "btn-sm");
-                delete.setDisable(true);
-                delete.setTooltip(
-                        new Tooltip("Permanent deletion is not implemented yet.")
-                );
+                delete.setOnAction(e -> {
+                    Alert confirm = new Alert(
+                            Alert.AlertType.CONFIRMATION,
+                            "This action permanently removes @"
+                                    + u.getUsername()
+                                    + " from Marketplace access. Their listings, deals, "
+                                    + "reviews, and reports will be retained as historical "
+                                    + "records. This action cannot be undone."
+                    );
+                    confirm.setHeaderText("Confirm Account Deletion");
+                    confirm.showAndWait().ifPresent(result -> {
+                        if (result == ButtonType.OK) {
+                            try {
+                                DummyDataService.getInstance().deleteUser(
+                                        u.getUsername()
+                                );
+                                new Alert(
+                                        Alert.AlertType.INFORMATION,
+                                        "Account deleted successfully. "
+                                                + "Historical records have been retained."
+                                ).showAndWait();
+                                showUsers();
+                            } catch (Exception ex) {
+                                showError("Unable to delete user account", ex);
+                            }
+                        }
+                    });
+                });
                 row.getChildren().addAll(info, edit, toggle, delete);
                 root.getChildren().add(row);
             }
@@ -1216,6 +1241,195 @@ public class AdminDashboardController {
         ScrollPane scroll = new ScrollPane(root);
         scroll.setFitToWidth(true);
         contentPane.getChildren().add(scroll);
+    }
+
+    @FXML
+    private void showReports() {
+        setActive(btnReports, "Reports");
+        contentPane.getChildren().clear();
+
+        VBox root = new VBox(12);
+        root.setPadding(new Insets(4));
+
+        List<Report> reports;
+
+        try {
+            reports = DummyDataService.getInstance().getAllReports();
+        } catch (Exception ex) {
+            showError("Unable to load reports", ex);
+            return;
+        }
+
+        if (reports == null || reports.isEmpty()) {
+            Label empty = new Label("No reports have been submitted.");
+            empty.setStyle("-fx-text-fill: #888888; -fx-font-size: 14px;");
+            root.getChildren().add(empty);
+        } else {
+            DateTimeFormatter formatter =
+                    DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm");
+
+            for (Report report : reports) {
+                VBox card = new VBox(8);
+                card.setPadding(new Insets(14));
+                card.getStyleClass().add("notif-item");
+                card.setMaxWidth(Double.MAX_VALUE);
+
+                // Listing title and report status.
+                Label title = new Label(
+                        report.getListingTitle() == null
+                                ? "Unknown Listing"
+                                : report.getListingTitle()
+                );
+                title.setStyle("-fx-font-size: 15px; -fx-font-weight: bold;");
+                title.setWrapText(true);
+
+                Label status = new Label("Status: " + report.getStatus());
+                status.setStyle("-fx-font-weight: bold;");
+
+                // Report information.
+                Label listingId = new Label(
+                        "Listing ID: " + report.getListingId()
+                );
+
+                Label reporter = new Label(
+                        "Reported by: " + report.getReporterUsername()
+                );
+
+                Label reason = new Label(
+                        "Reason: " + report.getReason()
+                );
+                reason.setWrapText(true);
+
+                Label details = new Label(
+                        "Details: " +
+                                (report.getDetails() == null ||
+                                        report.getDetails().isBlank()
+                                        ? "No additional details."
+                                        : report.getDetails())
+                );
+                details.setWrapText(true);
+
+                Label submitted = new Label(
+                        "Submitted: " +
+                                (report.getCreatedAt() == null
+                                        ? "Unknown"
+                                        : report.getCreatedAt().format(formatter))
+                );
+
+                for (Label label : List.of(
+                        listingId, reporter, reason, details, submitted
+                )) {
+                    label.setWrapText(true);
+                }
+
+                card.getChildren().addAll(
+                        title,
+                        status,
+                        listingId,
+                        reporter,
+                        reason,
+                        details,
+                        submitted
+                );
+
+                // Only OPEN reports can be processed.
+                if ("OPEN".equalsIgnoreCase(report.getStatus())) {
+                    HBox actions = new HBox(8);
+                    actions.setAlignment(Pos.CENTER_LEFT);
+
+                    Button resolve = new Button("Resolve");
+                    resolve.getStyleClass().addAll(
+                            "btn-success", "btn-sm"
+                    );
+
+                    Button dismiss = new Button("Dismiss");
+                    dismiss.getStyleClass().addAll(
+                            "btn-danger", "btn-sm"
+                    );
+
+                    resolve.setOnAction(e ->
+                            processReport(report, "RESOLVED")
+                    );
+
+                    dismiss.setOnAction(e ->
+                            processReport(report, "DISMISSED")
+                    );
+
+                    actions.getChildren().addAll(resolve, dismiss);
+                    card.getChildren().add(actions);
+                } else {
+                    Label reviewed = new Label(
+                            "Reviewed by: " +
+                                    (report.getReviewerUsername() == null
+                                            ? "Admin"
+                                            : report.getReviewerUsername())
+                    );
+
+                    Label resolutionNote = new Label(
+                            "Resolution note: " +
+                                    (report.getResolutionNote() == null ||
+                                            report.getResolutionNote().isBlank()
+                                            ? "None"
+                                            : report.getResolutionNote())
+                    );
+                    resolutionNote.setWrapText(true);
+
+                    card.getChildren().addAll(
+                            reviewed,
+                            resolutionNote
+                    );
+                }
+
+                root.getChildren().add(card);
+            }
+        }
+
+        ScrollPane scroll = new ScrollPane(root);
+        scroll.setFitToWidth(true);
+        contentPane.getChildren().add(scroll);
+    }
+
+    private void processReport(Report report, String targetStatus) {
+
+        String action = "RESOLVED".equals(targetStatus)
+                ? "resolve"
+                : "dismiss";
+
+        TextInputDialog dialog = new TextInputDialog();
+
+        dialog.setTitle("Process Report");
+        dialog.setHeaderText(
+                "Are you sure you want to " + action + " this report?"
+        );
+        dialog.setContentText("Resolution note (optional):");
+
+        dialog.showAndWait().ifPresent(note -> {
+
+            String previousStatus = report.getStatus();
+            String previousNote = report.getResolutionNote();
+
+            report.setStatus(targetStatus);
+            report.setResolutionNote(
+                    note.isBlank() ? null : note.trim()
+            );
+
+            try {
+                DummyDataService.getInstance().updateReport(report);
+
+                new Alert(
+                        Alert.AlertType.INFORMATION,
+                        "Report successfully " + action + "d."
+                ).showAndWait();
+
+                showReports();
+
+            } catch (Exception ex) {
+                report.setStatus(previousStatus);
+                report.setResolutionNote(previousNote);
+
+                showError("Unable to process report", ex);
+            }
+        });
     }
 
     @FXML

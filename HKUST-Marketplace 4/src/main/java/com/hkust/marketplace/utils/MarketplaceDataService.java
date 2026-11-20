@@ -6,6 +6,7 @@ import com.hkust.marketplace.models.Notification;
 import com.hkust.marketplace.models.Review;
 import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
+import com.hkust.marketplace.models.Report;
 
 import java.util.Collection;
 import java.util.List;
@@ -105,4 +106,10 @@ public interface MarketplaceDataService {
     void addReview(Review review);
 
     void setReviewHidden(String reviewId, boolean hidden);
+
+    void createReport(Report report);
+
+    List<Report> getAllReports();
+
+    void updateReport(Report report);
 }

@@ -5,6 +5,7 @@ import com.hkust.marketplace.models.Listing;
 import com.hkust.marketplace.models.ListingStatus;
 import com.hkust.marketplace.models.ListingType;
 import com.hkust.marketplace.models.Notification;
+import com.hkust.marketplace.models.Report;
 import com.hkust.marketplace.models.Review;
 import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
@@ -107,6 +108,24 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
               JOIN app_users s ON s.id = r.seller_id
               JOIN app_users b ON b.id = r.buyer_id
             """;
+
+    private static final String REPORT_SELECT = """
+        SELECT r.id,
+               l.id AS listing_id,
+               l.title AS listing_title,
+               reporter.username AS reporter_username,
+               r.reason,
+               r.details,
+               r.status,
+               r.created_at,
+               r.reviewed_at,
+               reviewer.username AS reviewer_username,
+               r.resolution_note
+          FROM reports r
+          JOIN listings l ON l.id = r.listing_id
+          JOIN app_users reporter ON reporter.id = r.reporter_id
+          LEFT JOIN app_users reviewer ON reviewer.id = r.reviewer_id
+        """;
 
     private final String jdbcUrl;
     private final Properties connectionProperties;
@@ -803,6 +822,79 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
         }
     }
 
+    @Override
+    public void createReport(Report report) {
+        Long reporterId = findUserId(report.getReporterUsername());
+        Long listingId = findListingIdById(report.getListingId());
+        if (reporterId == null || listingId == null) {
+            throw new DataAccessException("Report references an unknown user or listing.");
+        }
+        String sql = """
+            INSERT INTO reports
+                (listing_id, reporter_id, reason, details, status)
+            VALUES (?, ?, ?, ?, 'OPEN')
+            RETURNING id, created_at
+            """;
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, listingId);
+            statement.setLong(2, reporterId);
+            statement.setString(3, report.getReason());
+            statement.setString(4, report.getDetails());
+            try (ResultSet result = statement.executeQuery()) {
+                if (result.next()) {
+                    report.setId(prefixed("P", result.getLong("id")));
+                    report.setStatus("OPEN");
+                    report.setCreatedAt(
+                            toLocalDateTime(result.getTimestamp("created_at"))
+                    );
+                }
+            }
+        } catch (SQLException e) {
+            throw failure("create report", e);
+        }
+    }
+
+    @Override
+    public List<Report> getAllReports() {
+        return queryReports(
+                REPORT_SELECT + " ORDER BY r.created_at DESC",
+                null
+        );
+    }
+
+    @Override
+    public void updateReport(Report report) {
+        if (report == null || report.getId() == null) {
+            throw new IllegalArgumentException("Invalid report.");
+        }
+        long id = parsePrefixedId(report.getId(), "P");
+        String sql = """
+            UPDATE reports
+               SET status = ?,
+                   resolution_note = ?,
+                   reviewed_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+            RETURNING reviewed_at
+            """;
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, report.getStatus());
+            statement.setString(2, report.getResolutionNote());
+            statement.setLong(3, id);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) {
+                    throw new DataAccessException("Report not found.");
+                }
+                report.setReviewedAt(
+                        toLocalDateTime(result.getTimestamp("reviewed_at"))
+                );
+            }
+        } catch (SQLException e) {
+            throw failure("update report", e);
+        }
+    }
+
     private List<Listing> queryListings(String sql, Object parameter) {
         List<Listing> listings = new ArrayList<>();
         try (Connection connection = open();
@@ -872,6 +964,24 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
             return reviews;
         } catch (SQLException e) {
             throw failure("load reviews", e);
+        }
+    }
+
+    private List<Report> queryReports(String sql, String reporterUsername) {
+        List<Report> reports = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            if (reporterUsername != null) {
+                statement.setString(1, reporterUsername);
+            }
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    reports.add(readReport(result));
+                }
+            }
+            return reports;
+        } catch (SQLException e) {
+            throw failure("load reports", e);
         }
     }
 
@@ -959,6 +1069,32 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
         return review;
     }
 
+    private Report readReport(ResultSet result) throws SQLException {
+        Report report = new Report();
+        report.setId(prefixed("P", result.getLong("id")));
+        report.setListingId(
+                prefixed("L", result.getLong("listing_id"))
+        );
+        report.setListingTitle(result.getString("listing_title"));
+        report.setReporterUsername(result.getString("reporter_username"));
+        report.setReason(result.getString("reason"));
+        report.setDetails(result.getString("details"));
+        report.setStatus(result.getString("status"));
+        report.setCreatedAt(
+                toLocalDateTime(result.getTimestamp("created_at"))
+        );
+        report.setReviewedAt(
+                toLocalDateTime(result.getTimestamp("reviewed_at"))
+        );
+        report.setReviewerUsername(
+                result.getString("reviewer_username")
+        );
+        report.setResolutionNote(
+                result.getString("resolution_note")
+        );
+        return report;
+    }
+
     private Long findUserId(String username) {
         if (username == null || username.isBlank()) {
             return null;
@@ -994,6 +1130,32 @@ public class JdbcMarketplaceDataService implements MarketplaceDataService {
         } catch (SQLException e) {
             throw failure("find listing for review", e);
         }
+    }
+
+    private Long findListingIdById(String listingId) {
+        if (listingId == null || !listingId.matches("(?i)^L\\d+$")) {
+            return null;
+        }
+        long id = Long.parseLong(listingId.substring(1));
+        String sql = "SELECT id FROM listings WHERE id = ?";
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, id);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getLong(1) : null;
+            }
+        } catch (SQLException e) {
+            throw failure("find listing by id", e);
+        }
+    }
+
+    private long parsePrefixedId(String value, String prefix) {
+        if (value == null
+                || prefix == null
+                || !value.matches("(?i)^" + prefix + "\\d+$")) {
+            throw new IllegalArgumentException("Invalid ID: " + value);
+        }
+        return Long.parseLong(value.substring(prefix.length()));
     }
 
     private Connection open() throws SQLException {

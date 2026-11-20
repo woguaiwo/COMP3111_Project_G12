@@ -8,6 +8,7 @@ import com.hkust.marketplace.models.Listing;
 import com.hkust.marketplace.models.ListingStatus;
 import com.hkust.marketplace.models.ListingType;
 import com.hkust.marketplace.models.Notification;
+import com.hkust.marketplace.models.Report;
 import com.hkust.marketplace.models.Review;
 import com.hkust.marketplace.models.User;
 import com.hkust.marketplace.models.UserRole;
@@ -239,9 +240,12 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
 
     @Override
     public void deleteUser(String username) {
-        throw new UnsupportedOperationException(
-                "Permanent deletion requires Neon Auth account deletion support."
-        );
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("Username is required.");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("username", username);
+        callAction("admin_delete_user", payload, true);
     }
 
     @Override
@@ -368,6 +372,37 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
                 Map.of("reviewId", reviewId, "hidden", hidden),
                 true
         );
+    }
+
+    @Override
+    public void createReport(Report report) {
+        if (report == null) {
+            throw new IllegalArgumentException("Report cannot be null.");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("listingId", report.getListingId());
+        payload.put("reason", report.getReason());
+        payload.put("details", report.getDetails());
+        JsonNode saved = callAction("create_report", payload, true);
+        copyReport(toReport(saved), report);
+    }
+
+    @Override
+    public List<Report> getAllReports() {
+        return toReports(callAction("reports", Map.of(), true));
+    }
+
+    @Override
+    public void updateReport(Report report) {
+        if (report == null || report.getId() == null) {
+            throw new IllegalArgumentException("Invalid report.");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("reportId", report.getId());
+        payload.put("status", report.getStatus());
+        payload.put("resolutionNote", report.getResolutionNote());
+        JsonNode saved = callAction("admin_update_report", payload, true);
+        copyReport(toReport(saved), report);
     }
 
     private JsonNode request(String method, String path, Object body, boolean authenticated) {
@@ -627,6 +662,12 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         return result;
     }
 
+    private List<Report> toReports(JsonNode node) {
+        List<Report> result = new ArrayList<>();
+        node.forEach(item -> result.add(toReport(item)));
+        return result;
+    }
+
     private User toUser(JsonNode node) {
         User user = new User();
         user.setUsername(text(node, "username"));
@@ -636,6 +677,8 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         user.setBio(nullableText(node, "bio"));
         user.setPreferredMeetup(nullableText(node, "preferredMeetup"));
         user.setActive(node.path("active").asBoolean(true));
+        user.setDeleted(node.path("isDeleted").asBoolean(false));
+        user.setDeletedAt(dateTime(node, "deletedAt"));
         user.setAverageRating(node.path("averageRating").asDouble(0));
         user.setRatingCount(node.path("ratingCount").asInt(0));
         user.setCreatedAt(dateTime(node, "createdAt"));
@@ -712,6 +755,22 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         return review;
     }
 
+    private Report toReport(JsonNode node) {
+        Report report = new Report();
+        report.setId(text(node, "id"));
+        report.setListingId(text(node, "listingId"));
+        report.setListingTitle(text(node, "listingTitle"));
+        report.setReporterUsername(text(node, "reporterUsername"));
+        report.setReason(text(node, "reason"));
+        report.setDetails(nullableText(node, "details"));
+        report.setStatus(text(node, "status"));
+        report.setCreatedAt(dateTime(node, "createdAt"));
+        report.setReviewedAt(dateTime(node, "reviewedAt"));
+        report.setReviewerUsername(nullableText(node, "reviewerUsername"));
+        report.setResolutionNote(nullableText(node, "resolutionNote"));
+        return report;
+    }
+
     private void copyUser(User from, User to) {
         to.setUsername(from.getUsername());
         to.setFullName(from.getFullName());
@@ -782,6 +841,20 @@ public class HttpMarketplaceDataService implements MarketplaceDataService {
         to.setSellerReply(from.getSellerReply());
         to.setHidden(from.isHidden());
         to.setCreatedAt(from.getCreatedAt());
+    }
+
+    private void copyReport(Report from, Report to) {
+        to.setId(from.getId());
+        to.setListingId(from.getListingId());
+        to.setListingTitle(from.getListingTitle());
+        to.setReporterUsername(from.getReporterUsername());
+        to.setReason(from.getReason());
+        to.setDetails(from.getDetails());
+        to.setStatus(from.getStatus());
+        to.setCreatedAt(from.getCreatedAt());
+        to.setReviewedAt(from.getReviewedAt());
+        to.setReviewerUsername(from.getReviewerUsername());
+        to.setResolutionNote(from.getResolutionNote());
     }
 
     private static String encode(String value) {

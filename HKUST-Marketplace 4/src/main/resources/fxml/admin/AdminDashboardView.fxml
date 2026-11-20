@@ -33,6 +33,8 @@
                     onAction="#showDeals" maxWidth="Infinity" alignment="CENTER_LEFT"/>
             <Button fx:id="btnRatings" text="  Seller Ratings" styleClass="sidebar-btn"
                     onAction="#showRatings" maxWidth="Infinity" alignment="CENTER_LEFT"/>
+            <Button fx:id="btnReports" text="  Reports" styleClass="sidebar-btn"
+                    onAction="#showReports" maxWidth="Infinity" alignment="CENTER_LEFT"/>
             <Button fx:id="btnNotifications" text="  Notifications" styleClass="sidebar-btn"
                     onAction="#showNotifications" maxWidth="Infinity" alignment="CENTER_LEFT"/>
             <Button fx:id="btnProfile" text="  My Profile" styleClass="sidebar-btn"

@@ -33,7 +33,15 @@ public class AdminLoginController {
         try {
             auth = DummyDataService.getInstance().login(username, password);
         } catch (JdbcMarketplaceDataService.DataAccessException e) {
-            showError("Unable to reach the marketplace database. Please try again.");
+            String errorMessage = e.getMessage();
+
+            if (errorMessage != null
+                    && errorMessage.toLowerCase(java.util.Locale.ROOT)
+                    .contains("deleted")) {
+                showError("This account has been deleted and cannot be used.");
+            } else {
+                showError("Unable to reach the marketplace database. Please try again.");
+            }
             return;
         }
         if (auth == null || auth.user() == null || auth.user().getRole() != UserRole.ADMIN) {

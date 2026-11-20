@@ -15,6 +15,8 @@ public class User {
     private String bio;             // Seller optional
     private String preferredMeetup; // Seller optional
     private boolean active = true;
+    private boolean deleted = false;
+    private LocalDateTime deletedAt;
     private LocalDateTime createdAt;
     private double averageRating;   // For sellers
     private int ratingCount;
@@ -64,6 +66,22 @@ public class User {
 
     public int getRatingCount() { return ratingCount; }
     public void setRatingCount(int ratingCount) { this.ratingCount = ratingCount; }
+
+    public boolean isDeleted() {
+        return deleted;
+    }
+
+    public void setDeleted(boolean deleted) {
+        this.deleted = deleted;
+    }
+
+    public LocalDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
+    }
 
     @Override
     public String toString() {

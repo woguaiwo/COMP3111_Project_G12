@@ -6,6 +6,12 @@
 
 alter table app_users add column if not exists auth_user_id text;
 
+alter table public.app_users
+    add column if not exists is_deleted boolean not null default false;
+
+alter table public.app_users
+    add column if not exists deleted_at timestamptz;
+
 create unique index if not exists app_users_auth_user_id_idx
     on app_users (auth_user_id)
     where auth_user_id is not null;
@@ -71,6 +77,9 @@ begin
          order by (auth_user_id = v_auth_id) desc
          limit 1;
         if found then
+            if v_existing.is_deleted then
+                raise exception 'This account has been deleted and cannot be used';
+            end if;
             if v_existing.auth_user_id is not null and v_existing.auth_user_id <> v_auth_id then
                 raise exception 'Username is already linked to another account';
             end if;
@@ -106,11 +115,208 @@ begin
         return jsonb_build_object('ok', true, 'data', v_result);
     end if;
 
-    select * into v_actor from app_users
-     where auth_user_id = v_auth_id and is_active = true;
+        select * into v_actor
+        from app_users
+        where auth_user_id = v_auth_id
+          and is_active = true
+          and is_deleted = false;
+
     if not found then
         raise exception 'Marketplace profile is not linked to this account';
     end if;
+
+
+    -- Admin: retrieve all listing reports.
+    if v_action = 'reports' then
+        if v_actor.role <> 'ADMIN'::app_user_role then
+            raise exception 'Administrator access required';
+end if;
+
+select coalesce(
+               jsonb_agg(
+                       jsonb_build_object(
+                               'id', 'P' || r.id,
+                               'listingId', 'L' || r.listing_id,
+                               'listingTitle', l.title,
+                               'reporterUsername', reporter.username,
+                               'reason', r.reason,
+                               'details', r.details,
+                               'status', r.status,
+                               'createdAt', r.created_at,
+                               'reviewedAt', r.reviewed_at,
+                               'reviewerUsername', reviewer.username,
+                               'resolutionNote', r.resolution_note
+                       )
+                           order by r.created_at desc
+               ),
+               '[]'::jsonb
+       )
+into v_result
+from reports r
+         join listings l on l.id = r.listing_id
+         left join app_users reporter on reporter.id = r.reporter_id
+         left join app_users reviewer on reviewer.id = r.reviewer_id;
+
+return jsonb_build_object('ok', true, 'data', v_result);
+end if;
+
+
+    -- Buyer: submit a report for a listing.
+    if v_action = 'create_report' then
+        if v_actor.role <> 'BUYER'::app_user_role then
+            raise exception 'Buyer access required';
+end if;
+
+        v_id := nullif(
+            regexp_replace(
+                coalesce(v_payload ->> 'listingId', ''),
+                '^L',
+                '',
+                'i'
+            ),
+            ''
+        )::bigint;
+
+        if v_id is null or v_id <= 0 then
+            raise exception 'Invalid listing ID';
+end if;
+
+        if nullif(trim(coalesce(v_payload ->> 'reason', '')), '') is null then
+            raise exception 'Report reason is required';
+end if;
+
+        -- Preserve the original reporter and listing references.
+insert into reports (
+    listing_id,
+    reporter_id,
+    reason,
+    details
+)
+select
+    l.id,
+    v_actor.id,
+    trim(v_payload ->> 'reason'),
+    nullif(trim(coalesce(v_payload ->> 'details', '')), '')
+from listings l
+where l.id = v_id
+    returning id into v_id;
+
+if not found then
+            raise exception 'Listing not found';
+end if;
+
+        -- Notify all active, non-deleted administrators.
+insert into notifications (
+    recipient_id,
+    title,
+    message,
+    category,
+    is_read
+)
+select
+    u.id,
+    'New Listing Report',
+    'A buyer has reported listing "' || l.title ||
+    '". Please review it in Reports / Moderation.',
+    'System',
+    false
+from app_users u
+         join reports r on r.id = v_id
+         join listings l on l.id = r.listing_id
+where u.role = 'ADMIN'::app_user_role
+          and u.is_active = true
+          and u.is_deleted = false;
+
+-- Return the newly created report.
+select jsonb_build_object(
+               'id', 'P' || r.id,
+               'listingId', 'L' || r.listing_id,
+               'listingTitle', l.title,
+               'reporterUsername', reporter.username,
+               'reason', r.reason,
+               'details', r.details,
+               'status', r.status,
+               'createdAt', r.created_at,
+               'reviewedAt', r.reviewed_at,
+               'reviewerUsername', reviewer.username,
+               'resolutionNote', r.resolution_note
+       )
+into v_result
+from reports r
+         join listings l on l.id = r.listing_id
+         left join app_users reporter on reporter.id = r.reporter_id
+         left join app_users reviewer on reviewer.id = r.reviewer_id
+where r.id = v_id;
+
+return jsonb_build_object('ok', true, 'data', v_result);
+end if;
+
+
+    -- Admin: resolve or dismiss an open report.
+    if v_action = 'admin_update_report' then
+        if v_actor.role <> 'ADMIN'::app_user_role then
+            raise exception 'Administrator access required';
+end if;
+
+        v_id := nullif(
+            regexp_replace(
+                coalesce(v_payload ->> 'reportId', ''),
+                '^P',
+                '',
+                'i'
+            ),
+            ''
+        )::bigint;
+
+        if v_id is null or v_id <= 0 then
+            raise exception 'Invalid report ID';
+end if;
+
+        v_status := upper(trim(coalesce(v_payload ->> 'status', '')));
+
+        if v_status is null
+   or v_status not in ('RESOLVED', 'DISMISSED') then
+    raise exception 'Invalid report status';
+end if;
+
+        -- Only OPEN reports can be processed.
+update reports
+set status = v_status,
+    resolution_note = nullif(
+            trim(coalesce(v_payload ->> 'resolutionNote', '')),
+            ''
+                      ),
+    reviewer_id = v_actor.id,
+    reviewed_at = now()
+where id = v_id
+  and status = 'OPEN';
+
+if not found then
+            raise exception 'Report not found or already processed';
+end if;
+
+select jsonb_build_object(
+               'id', 'P' || r.id,
+               'listingId', 'L' || r.listing_id,
+               'listingTitle', l.title,
+               'reporterUsername', reporter.username,
+               'reason', r.reason,
+               'details', r.details,
+               'status', r.status,
+               'createdAt', r.created_at,
+               'reviewedAt', r.reviewed_at,
+               'reviewerUsername', reviewer.username,
+               'resolutionNote', r.resolution_note
+       )
+into v_result
+from reports r
+         join listings l on l.id = r.listing_id
+         left join app_users reporter on reporter.id = r.reporter_id
+         left join app_users reviewer on reviewer.id = r.reviewer_id
+where r.id = v_id;
+
+return jsonb_build_object('ok', true, 'data', v_result);
+end if;
 
     if v_action = 'me' or v_action = 'user' then
         if v_action = 'user' then
@@ -142,13 +348,18 @@ begin
         select coalesce(jsonb_agg(jsonb_build_object(
             'username', u.username, 'fullName', u.full_name, 'role', u.role::text,
             'residenceHall', u.residence_hall, 'bio', u.bio,
-            'preferredMeetup', u.preferred_meetup, 'active', u.is_active,
-            'averageRating', u.average_rating, 'ratingCount', u.rating_count,
+            'preferredMeetup', u.preferred_meetup,
+            'active', u.is_active,
+            'isDeleted', u.is_deleted,
+            'deletedAt', u.deleted_at,
+            'averageRating', u.average_rating,
+            'ratingCount', u.rating_count,
             'createdAt', u.created_at
         ) order by lower(u.username)), '[]'::jsonb)
           into v_result
           from app_users u
-         where v_role is null or u.role::text = v_role;
+        where u.is_deleted = false
+          and (v_role is null or u.role::text = v_role);
         return jsonb_build_object('ok', true, 'data', v_result);
     end if;
 
@@ -219,9 +430,13 @@ begin
                 raise exception 'User not found';
     end if;
 
+            if v_existing.is_deleted then
+                raise exception 'Deleted accounts cannot be activated or deactivated';
+            end if;
+
             if v_existing.role = 'ADMIN'::app_user_role then
                 raise exception 'Admin accounts cannot be deactivated here';
-    end if;
+            end if;
     update app_users
     set is_active = v_active,
         updated_at = now()
@@ -234,6 +449,50 @@ begin
                     )
            );
     end if;
+
+                -- Admin: irreversibly soft-delete a buyer or seller account.
+            if v_action = 'admin_delete_user' then
+                if v_actor.role <> 'ADMIN'::app_user_role then
+                    raise exception 'Administrator access required';
+        end if;
+
+                v_username := lower(trim(coalesce(v_payload ->> 'username', '')));
+
+                if v_username = '' then
+                    raise exception 'Username is required';
+        end if;
+
+        select * into v_existing
+        from app_users
+        where lower(username) = v_username;
+
+        if not found then
+                    raise exception 'User not found';
+        end if;
+
+                if v_existing.role = 'ADMIN'::app_user_role then
+                    raise exception 'Admin accounts cannot be deleted here';
+        end if;
+
+                if v_existing.is_deleted then
+                    raise exception 'This account has already been deleted';
+        end if;
+
+        update app_users
+        set is_deleted = true,
+            is_active = false,
+            deleted_at = now(),
+            updated_at = now()
+        where id = v_existing.id;
+
+        return jsonb_build_object(
+                'ok', true,
+                'data', jsonb_build_object(
+                        'username', v_existing.username,
+                        'deleted', true
+                        )
+               );
+        end if;
 
     --Admin update self profile
     IF v_action = 'admin_update_profile' THEN
@@ -285,7 +544,12 @@ END IF;
             'category', l.category, 'type', l.type::text, 'status', l.status::text,
             'condition', l.item_condition, 'price', l.price,
             'lendingDays', l.lending_days, 'meetupLocation', l.meetup_location,
-            'sellerUsername', u.username, 'sellerFullName', u.full_name,
+            'sellerUsername', case
+             when u.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+             else u.username end,
+            'sellerFullName', case
+            when u.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+            else u.full_name end,
             'postedAt', l.created_at, 'reviewedAt', l.reviewed_at,
             'rejectionReason', l.rejection_reason, 'removalReason', l.removal_reason,
             'viewCount', l.view_count,
@@ -313,8 +577,14 @@ END IF;
             'id', 'L' || l.id, 'title', l.title, 'description', l.description,
             'category', l.category, 'type', l.type::text, 'status', l.status::text,
             'condition', l.item_condition, 'price', l.price, 'lendingDays', l.lending_days,
-            'meetupLocation', l.meetup_location, 'sellerUsername', u.username,
-            'sellerFullName', u.full_name, 'postedAt', l.created_at,
+            'meetupLocation', l.meetup_location,
+            'sellerUsername', case
+                when u.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+                else u.username end,
+            'sellerFullName', case
+                when u.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+                else u.full_name end,
+            'postedAt', l.created_at,
             'reviewedAt', l.reviewed_at, 'rejectionReason', l.rejection_reason,
             'removalReason', l.removal_reason,
             'viewCount', l.view_count,
@@ -530,7 +800,12 @@ END IF;
         end if;
         select coalesce(jsonb_agg(jsonb_build_object(
             'id', 'D' || d.id, 'listingId', 'L' || d.listing_id, 'listingTitle', l.title,
-            'buyerUsername', b.username, 'sellerUsername', s.username, 'dealType', d.deal_type::text,
+            'buyerUsername', case
+            when b.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Buyer'
+            else b.username end,
+            'sellerUsername', case when s.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+            else s.username end,
+            'dealType', d.deal_type::text,
             'status', initcap(lower(d.status::text)), 'offerPrice', d.offer_price,
             'borrowStart', d.borrow_start, 'borrowEnd', d.borrow_end, 'rated', d.rated,
             'createdAt', d.created_at, 'completedAt', d.completed_at
@@ -554,7 +829,13 @@ END IF;
         returning deals.id into v_id;
         select jsonb_build_object(
             'id', 'D' || d.id, 'listingId', 'L' || d.listing_id, 'listingTitle', l.title,
-            'buyerUsername', b.username, 'sellerUsername', s.username, 'dealType', d.deal_type::text,
+            'buyerUsername', case
+            when b.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Buyer'
+            else b.username end,
+            'sellerUsername', case
+            when s.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+            else s.username end,
+            'dealType', d.deal_type::text,
             'status', initcap(lower(d.status::text)), 'offerPrice', d.offer_price,
             'borrowStart', d.borrow_start, 'borrowEnd', d.borrow_end, 'rated', d.rated,
             'createdAt', d.created_at, 'completedAt', d.completed_at
@@ -597,7 +878,13 @@ END IF;
         v_seller := nullif(lower(trim(v_payload ->> 'seller')), '');
         if v_seller is null and v_actor.role <> 'ADMIN'::app_user_role then raise exception 'Administrator access required'; end if;
         select coalesce(jsonb_agg(jsonb_build_object(
-            'id', 'R' || r.id, 'sellerUsername', s.username, 'buyerUsername', b.username,
+                'id', 'R' || r.id,
+                'sellerUsername', case
+        when s.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+        else s.username end,
+                'buyerUsername', case
+        when b.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Buyer'
+        else b.username end,
             'listingTitle', l.title, 'rating', r.rating, 'comment', r.comment,
             'sellerReply', r.seller_reply, 'hidden', r.is_hidden, 'createdAt', r.created_at
         ) order by r.created_at desc), '[]'::jsonb)
@@ -663,7 +950,12 @@ end if;
                 (v_payload ->> 'rating')::integer, trim(v_payload ->> 'comment'))
         returning id into v_id;
         select jsonb_build_object(
-            'id', 'R' || r.id, 'sellerUsername', s.username, 'buyerUsername', b.username,
+                       'id', 'R' || r.id,
+                       'sellerUsername', case
+        when s.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Seller'
+        else s.username end,
+        'buyerUsername', case when b.is_deleted and v_actor.role <> 'ADMIN'::app_user_role then 'Deleted Buyer'
+        else b.username end,
             'listingTitle', l.title, 'rating', r.rating, 'comment', r.comment,
             'sellerReply', r.seller_reply, 'hidden', r.is_hidden, 'createdAt', r.created_at
         ) into v_result from reviews r join listings l on l.id = r.listing_id

@@ -30,6 +30,8 @@ create table app_users (
     bio text,
     preferred_meetup varchar(120),
     is_active boolean not null default true,
+    is_deleted boolean not null default false,
+    deleted_at timestamptz,
     average_rating numeric(2, 1) not null default 0
         check (average_rating >= 0 and average_rating <= 5),
     rating_count integer not null default 0
@@ -135,6 +137,29 @@ create table notifications (
     is_read boolean not null default false,
     created_at timestamptz not null default now()
 );
+
+create table reports (
+                         id bigint generated always as identity primary key,
+                         listing_id bigint not null references listings(id),
+                         reporter_id bigint not null references app_users(id),
+                         reason varchar not null,
+                         details text,
+                         status varchar(20) not null default 'OPEN'
+                             check (status in ('OPEN', 'RESOLVED', 'DISMISSED')),
+                         created_at timestamptz not null default now(),
+                         reviewed_at timestamptz,
+                         reviewer_id bigint references app_users(id),
+                         resolution_note text
+);
+
+create index reports_status_created_idx
+    on reports (status, created_at desc);
+
+create index reports_reporter_idx
+    on reports (reporter_id, created_at desc);
+
+create index reports_listing_idx
+    on reports (listing_id, created_at desc);
 
 create index listings_status_created_idx on listings (status, created_at desc);
 create index listings_seller_idx on listings (seller_id);

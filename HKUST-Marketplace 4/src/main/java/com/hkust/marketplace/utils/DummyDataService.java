@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import com.hkust.marketplace.models.Report;
 
 /**
  * Compatibility facade used by the existing controllers.
@@ -24,6 +25,7 @@ public class DummyDataService implements MarketplaceDataService {
     private final Map<String, Listing> listings = new LinkedHashMap<>();
     private final List<Deal> deals = new ArrayList<>();
     private final List<Notification> notifications = new ArrayList<>();
+    private final List<Report> reports = new ArrayList<>();
     private final List<Review> reviews = new ArrayList<>();
     private final MarketplaceDataService backend;
 
@@ -489,6 +491,59 @@ public class DummyDataService implements MarketplaceDataService {
             n.setId("N" + notifIdCounter.getAndIncrement());
         }
         notifications.add(n);
+    }
+
+    // ========== Report methods ==========
+    @Override
+    public void createReport(Report report) {
+        if (backend != null) {
+            backend.createReport(report);
+            return;
+        }
+        if (report == null) {
+            throw new IllegalArgumentException("Report cannot be null.");
+        }
+        if (report.getId() == null) {
+            report.setId("P" + (reports.size() + 1));
+        }
+        if (report.getCreatedAt() == null) {
+            report.setCreatedAt(java.time.LocalDateTime.now());
+        }
+        if (report.getStatus() == null || report.getStatus().isBlank()) {
+            report.setStatus("OPEN");
+        }
+        reports.add(report);
+    }
+
+    @Override
+    public List<Report> getAllReports() {
+        if (backend != null) {
+            return backend.getAllReports();
+        }
+        return reports.stream()
+                .sorted(Comparator.comparing(
+                        Report::getCreatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())
+                ))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public void updateReport(Report report) {
+        if (backend != null) {
+            backend.updateReport(report);
+            return;
+        }
+        if (report == null || report.getId() == null) {
+            throw new IllegalArgumentException("Invalid report.");
+        }
+        for (int i = 0; i < reports.size(); i++) {
+            if (report.getId().equals(reports.get(i).getId())) {
+                reports.set(i, report);
+                return;
+            }
+        }
+        throw new IllegalArgumentException("Report not found.");
     }
 
     // ========== Review methods ==========
